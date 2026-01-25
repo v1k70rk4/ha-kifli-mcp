@@ -1,0 +1,39 @@
+#!/usr/bin/with-contenv bashio
+set -euo pipefail
+
+PORT="$(bashio::config 'port')"
+EMAIL="$(bashio::config 'email')"
+PASS="$(bashio::config 'password')"
+
+export NODE_OPTIONS="--dns-result-order=ipv4first"
+
+# mcp-remote auth/cache tartós helyre (HA add-on /data)
+export HOME="/data"
+export MCP_REMOTE_CONFIG_DIR="/data/.mcp-auth"
+mkdir -p "${MCP_REMOTE_CONFIG_DIR}"
+
+if [ -z "${EMAIL}" ] || [ "${EMAIL}" = "null" ]; then
+  bashio::log.fatal "email nincs beállítva az add-on konfigurációban (Configuration tab)."
+  exit 1
+fi
+
+if [ -z "${PASS}" ] || [ "${PASS}" = "null" ]; then
+  bashio::log.fatal "password nincs beállítva az add-on konfigurációban (Configuration tab)."
+  exit 1
+fi
+
+# shim ezekből olvas
+export RHL_EMAIL="${EMAIL}"
+export RHL_PASS="${PASS}"
+export KIFLI_MCP_URL="https://mcp.kifli.hu/mcp"
+export KIFLI_TRANSPORT="http-first"
+
+bashio::log.info "Starting Kifli MCP bridge on port ${PORT} (email_len=${#EMAIL}, pass_len=${#PASS}) ..."
+
+exec /opt/venv/bin/mcp-proxy \
+  --host=0.0.0.0 \
+  --port="${PORT}" \
+  --pass-environment \
+  --log-level=INFO \
+  -- \
+  /opt/venv/bin/python3 /app/mcp_schema_shim.py

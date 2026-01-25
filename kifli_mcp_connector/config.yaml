@@ -1,0 +1,35 @@
+name: "Kifli MCP Connector"
+slug: "kifli_mcp_connector"
+version: "1.1.5"
+description: "Bridges Kifli/Rohlik MCP to SSE for Home Assistant MCP client, with schema shim."
+url: "https://github.com/v1k70rk4/ha-kifli-mcp"
+
+arch:
+  - amd64
+  - aarch64
+  - armv7
+  - armhf
+
+startup: services
+boot: auto
+init: false
+
+host_network: true
+
+ports:
+  42783/tcp: 42783
+
+ports_description:
+  42783/tcp: "MCP Proxy SSE endpoint"
+
+webui: "http://[HOST]:[PORT:42783]"
+
+options:
+  port: 42783
+  email: ""
+  password: ""
+
+schema:
+  port: int
+  email: str
+  password: password

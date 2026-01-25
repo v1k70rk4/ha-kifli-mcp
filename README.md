@@ -1,5 +1,4 @@
-# ha-kifli-mcp
-
+# HomeAssistant Kifl MCP Connector
 Home Assistant add-on repository: **Kifli MCP Connector**.
 
 Ez az add-on a Kifli/Rohlík MCP végpontot “áthidalja” egy, Home Assistantból könnyen fogyasztható **SSE (Server-Sent Events)** interfészre, és tartalmaz egy **schema shim** réteget is, ami a tool schema-kat a HA/OpenAI szigorúbb elvárásaihoz igazítja.
@@ -27,6 +26,3 @@ Ezután az add-on megjelenik a Store-ban.
 - Az add-on bejelentkezési adatokat (email/jelszó) kér a Kifli/Rohlík szolgáltatáshoz.
 - A jelszó a Home Assistant add-on konfigurációjában tárolódik.
 - Az add-on a működéshez **host network** módot használ (lásd add-on README).
-
-## License
-Válassz licencet (pl. MIT) és add hozzá a `LICENSE` fájlt a repóhoz.

@@ -44,7 +44,7 @@ Az SSE endpoint (alapesetben): `http://<home_assistant_ip>:42783/sse`
 ### MCP hozzáadása az Assisthoz
 1. Home Assistant: **Beállítások → Hangsegédek (Assist)**
 2. Nyisd meg a használt asszisztenst (pl. “OpenAI”)
-3. A **Tools / Eszközök / Toolok** résznél engedélyezd / add hozzá az **MCP** integrációt
+3. Az instrukciók alatt a **Home Assistant vezérlése** résznél engedélyezd a **rohlik_mcp** integrációt
 4. Mentsd el.
 
 ### Ajánlott prompt (Assistant instructions)

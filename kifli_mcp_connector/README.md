@@ -31,14 +31,14 @@ email: "user@example.com"
 password: "********"
 ```
 
-Az SSE endpoint (alapesetben): `http://<home_assistant_ip>:42783/`
+Az SSE endpoint (alapesetben): `http://<home_assistant_ip>:42783/sse`
 
 ### MCP szerver felvétele (Eszközök és szolgáltatások)
 1. Home Assistant: **Beállítások → Eszközök és szolgáltatások**
 2. **Integráció hozzáadása**
 3. Keresd meg: **Model Context Protocol (MCP)**
 4. Add meg az MCP SSE URL-t:
-   - `http://<home_assistant_ip>:42783/`
+   - `http://<home_assistant_ip>:42783/sse`
 5. Mentsd el, várd meg míg az integráció felveszi a toolokat.
 
 ### MCP hozzáadása az Assisthoz

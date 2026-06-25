@@ -1,7 +1,7 @@
-name: "Kifli MCP Connector"
+name: "Rohlik Group (hu, cz, at, de, ro) MCP Connector"
 slug: "kifli_mcp_connector"
 version: "1.2.0"
-description: "Bridges Kifli/Rohlik MCP to SSE for Home Assistant MCP client, with schema shim."
+description: "Bridges the Rohlik Group MCP (hu/cz/at/de/ro) to SSE for the Home Assistant MCP client, with schema shim."
 url: "https://github.com/v1k70rk4/ha-kifli-mcp"
 
 arch:

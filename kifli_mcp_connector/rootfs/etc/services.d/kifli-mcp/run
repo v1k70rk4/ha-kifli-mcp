@@ -4,6 +4,8 @@ set -euo pipefail
 PORT="$(bashio::config 'port')"
 EMAIL="$(bashio::config 'email')"
 PASS="$(bashio::config 'password')"
+COUNTRY="$(bashio::config 'country')"
+MCP_URL="$(bashio::config 'mcp_url')"
 
 export NODE_OPTIONS="--dns-result-order=ipv4first"
 
@@ -22,13 +24,30 @@ if [ -z "${PASS}" ] || [ "${PASS}" = "null" ]; then
   exit 1
 fi
 
+# Ország → MCP végpont feloldás (az 'mcp_url' override mindent felülír)
+if [ -n "${MCP_URL}" ] && [ "${MCP_URL}" != "null" ]; then
+  URL="${MCP_URL}"
+else
+  case "${COUNTRY}" in
+    hu) URL="https://mcp.kifli.hu/mcp" ;;
+    cz) URL="https://mcp.rohlik.cz/mcp" ;;
+    at) URL="https://mcp.gurkerl.at/mcp" ;;
+    de) URL="https://mcp.knuspr.de/mcp" ;;
+    ro) URL="https://mcp.sezamo.ro/mcp" ;;
+    *)
+      bashio::log.fatal "Ismeretlen 'country' érték: '${COUNTRY}'. Engedélyezett: hu, cz, at, de, ro (vagy állíts be egyedi 'mcp_url'-t)."
+      exit 1
+      ;;
+  esac
+fi
+
 # shim ezekből olvas
 export RHL_EMAIL="${EMAIL}"
 export RHL_PASS="${PASS}"
-export KIFLI_MCP_URL="https://mcp.kifli.hu/mcp"
+export KIFLI_MCP_URL="${URL}"
 export KIFLI_TRANSPORT="http-first"
 
-bashio::log.info "Starting Kifli MCP bridge on port ${PORT} (email_len=${#EMAIL}, pass_len=${#PASS}) ..."
+bashio::log.info "Starting Kifli MCP bridge on port ${PORT} (country=${COUNTRY}, url=${URL}, email_len=${#EMAIL}, pass_len=${#PASS}) ..."
 
 exec /opt/venv/bin/mcp-proxy \
   --host=0.0.0.0 \

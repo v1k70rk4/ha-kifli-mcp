@@ -5,7 +5,7 @@
 Az add-on célja, hogy a Kifli/Rohlík MCP tooljait egy Home Assistantból egyszerűen elérhető **SSE endpointon** tegye elérhetővé, miközben a tool input schema-kat “megszelídíti” a Home Assistant / OpenAI function tooling elvárásaihoz.
 
 ## Mit kapsz?
-- MCP remote kliens a Kifli MCP felé
+- MCP remote kliens a Kifli/Rohlik Group MCP felé (HU/CZ/AT/DE/RO)
 - `mcp-proxy` SSE szerver a Home Assistant felé
 - `mcp_schema_shim.py`: schema normalizálás (refs, unions, unsupported kulcsok, üres object properties fix)
 
@@ -21,15 +21,31 @@ Az add-on célja, hogy a Kifli/Rohlík MCP tooljait egy Home Assistantból egysz
 | Kulcs | Típus | Alap | Leírás |
 |------|------|------|--------|
 | `port` | int | `42783` | SSE szerver port |
-| `email` | string | `""` | Kifli/Rohlík login email |
-| `password` | password | `""` | Kifli/Rohlík login jelszó |
+| `country` | list | `hu` | Rohlik Group ország: `hu`, `cz`, `at`, `de`, `ro` (lásd lentebb) |
+| `email` | string | `""` | A kiválasztott ország szolgáltatásához tartozó login email |
+| `password` | password | `""` | A kiválasztott ország szolgáltatásához tartozó jelszó |
+| `mcp_url` | string | `""` | (Opcionális) Egyedi MCP végpont; ha kitöltöd, felülírja a `country` szerinti URL-t |
 
 ### Példa
 ```yaml
 port: 42783
+country: "hu"
 email: "user@example.com"
 password: "********"
 ```
+
+### Támogatott országok (Rohlik Group)
+A `country` opció a megfelelő ország MCP végpontjára mutat. A megadott email/jelszó **az adott ország szolgáltatásához tartozó fiók** adata (a hitelesítő fejlécek ország-függetlenek: `rhl-email` / `rhl-pass`).
+
+| `country` | Márka | MCP végpont |
+|-----------|-------|-------------|
+| `hu` | Kifli.hu (Magyarország) | `https://mcp.kifli.hu/mcp` |
+| `cz` | Rohlik.cz (Csehország) | `https://mcp.rohlik.cz/mcp` |
+| `at` | Gurkerl.at (Ausztria) | `https://mcp.gurkerl.at/mcp` |
+| `de` | Knuspr.de (Németország) | `https://mcp.knuspr.de/mcp` |
+| `ro` | Sezamo.ro (Románia) | `https://mcp.sezamo.ro/mcp` |
+
+> Szlovákiában a Rohlik Group nem üzemeltet saját szolgáltatást. Ha új vagy nem listázott végpontod van, töltsd ki az `mcp_url` opciót — az felülírja a `country` szerinti alapértelmezést.
 
 Az SSE endpoint (alapesetben): `http://<home_assistant_ip>:42783/sse`
 

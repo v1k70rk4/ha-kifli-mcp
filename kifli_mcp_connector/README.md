@@ -63,6 +63,8 @@ The `country` option points to that country's MCP endpoint. The email/password y
 | `ro` | Sezamo.ro (Romania) | `https://mcp.sezamo.ro/mcp` |
 
 > Rohlik Group does not operate a service in Slovakia. If you have a new or unlisted endpoint, set the `mcp_url` option — it overrides the `country` default.
+>
+> Upgrading from a version without the `country` option defaults to Hungary (`hu`), so existing setups keep working without any change.
 
 The SSE endpoint (by default): `http://<home_assistant_ip>:42783/sse`
 
@@ -176,6 +178,8 @@ A `country` opció a megfelelő ország MCP végpontjára mutat. A megadott emai
 | `ro` | Sezamo.ro (Románia) | `https://mcp.sezamo.ro/mcp` |
 
 > Szlovákiában a Rohlik Group nem üzemeltet saját szolgáltatást. Ha új vagy nem listázott végpontod van, töltsd ki az `mcp_url` opciót — az felülírja a `country` szerinti alapértelmezést.
+>
+> Ha egy `country` opció nélküli verzióról frissítesz, az alapértelmezés a magyar (`hu`), így a meglévő beállításod változatlanul működik tovább.
 
 Az SSE endpoint (alapesetben): `http://<home_assistant_ip>:42783/sse`
 

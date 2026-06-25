@@ -24,6 +24,12 @@ if [ -z "${PASS}" ] || [ "${PASS}" = "null" ]; then
   exit 1
 fi
 
+# Visszafelé kompatibilitás: ha nincs ország megadva (régi, 'country' nélküli
+# konfiguráció frissítése), az alapértelmezett a magyar.
+if [ -z "${COUNTRY}" ] || [ "${COUNTRY}" = "null" ]; then
+  COUNTRY="hu"
+fi
+
 # Ország → MCP végpont feloldás (az 'mcp_url' override mindent felülír)
 if [ -n "${MCP_URL}" ] && [ "${MCP_URL}" != "null" ]; then
   URL="${MCP_URL}"

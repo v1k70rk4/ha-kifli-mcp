@@ -52,7 +52,7 @@ The add-on then appears in the Store.
 
 <a name="magyar"></a>
 
-# 🇭🇺 Magyar — Rohlik Group (hu, cz, at, de, ro) MCP Connector
+# 🇭🇺 Magyar — Rohlik Group (kifli.hu) MCP Connector
 
 Home Assistant add-on repository: **Rohlik Group (hu, cz, at, de, ro) MCP Connector**.
 

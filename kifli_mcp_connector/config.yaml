@@ -30,7 +30,7 @@ options:
 
 schema:
   port: int
-  country: "list(hu|cz|at|de|ro)"
+  country: "list(hu|cz|at|de|ro)?"
   email: str
   password: password
   mcp_url: "str?"

@@ -14,7 +14,7 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
 SERVER_NAME = "kifli-schema-shim"
-SERVER_VERSION = "1.0.2"
+SERVER_VERSION = "1.0.3"
 
 # Tool kihagyó rész, a HA / OpenAI schema-konverzió el tud hasalni rajtuk. v1.1 már kezeli.
 IGNORE_WORDS = {
@@ -64,6 +64,49 @@ def _strip_unsupported_keywords(node: Any) -> Any:
         return node
     if isinstance(node, list):
         return [_strip_unsupported_keywords(x) for x in node]
+    return node
+
+
+def _normalize_exclusive_bounds(node: Any) -> Any:
+    """
+    HA 2026.9 regresszió elleni védelem.
+
+    A HA ekkor váltott `voluptuous_openapi`-ról `probatio`-ra, és annak a
+    from_openapi()/to_openapi() köre a draft 2020-12-es SZÁM alakú
+    exclusiveMinimum/Maximum-ot a draft-04-es BOOLEAN alakra írja át:
+
+        {"exclusiveMinimum": 0}  ->  {"minimum": 0, "exclusiveMinimum": true}
+
+    Ez 2020-12 szerint érvénytelen (számot vár), és az Anthropic API
+    emiatt 400-zal elutasítja az EGÉSZ tool listát:
+        tools.NN.custom.input_schema: JSON schema is invalid.
+
+    Ezért itt eleve nem engedjük ki az exclusive* kulcsokat: egész típusnál
+    pontos inkluzív határra írjuk át, egyébként a határt megtartva elhagyjuk.
+    """
+    if isinstance(node, dict):
+        node = {k: _normalize_exclusive_bounds(v) for k, v in node.items()}
+        is_int = node.get("type") == "integer"
+
+        ex_min = node.pop("exclusiveMinimum", None)
+        if isinstance(ex_min, bool):
+            pass  # draft-04 maradvány: csak dobjuk, a "minimum" marad
+        elif isinstance(ex_min, (int, float)):
+            bound = int(ex_min) + 1 if is_int else ex_min
+            node["minimum"] = max(bound, node["minimum"]) if "minimum" in node else bound
+
+        ex_max = node.pop("exclusiveMaximum", None)
+        if isinstance(ex_max, bool):
+            pass
+        elif isinstance(ex_max, (int, float)):
+            bound = int(ex_max) - 1 if is_int else ex_max
+            node["maximum"] = min(bound, node["maximum"]) if "maximum" in node else bound
+
+        return node
+
+    if isinstance(node, list):
+        return [_normalize_exclusive_bounds(x) for x in node]
+
     return node
 
 
@@ -261,6 +304,7 @@ def simplify_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
     base = _normalize_unions(base)
     base = _strip_dollar_keys(base)
     base = _strip_unsupported_keywords(base)
+    base = _normalize_exclusive_bounds(base)
     base = _ensure_types_ctx(base)
 
     # root sanity

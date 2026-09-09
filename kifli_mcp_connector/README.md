@@ -11,7 +11,7 @@ This add-on exposes the Rohlik Group MCP tools (Kifli.hu, Rohlik.cz, Gurkerl.at,
 ## What you get
 - MCP remote client to the Kifli / Rohlik Group MCP (HU/CZ/AT/DE/RO)
 - `mcp-proxy` SSE server towards Home Assistant
-- `mcp_schema_shim.py`: schema normalization (refs, unions, unsupported keys, empty-object-properties fix)
+- `mcp_schema_shim.py`: schema normalization (refs, unions, unsupported keys, empty-object-properties fix, draft-04 exclusive bounds)
 
 ## How it works
 ```
@@ -110,6 +110,19 @@ Strip image links from the answers — the system cannot display them.
 - **401 / authentication error:** wrong email/password, or the credentials don't match the selected `country`. Make sure the account belongs to that country's service.
 - **No tools appear in Home Assistant:** confirm the add-on is running and the SSE URL is exactly `http://<ha-ip>:42783/sse`; reload the MCP integration.
 - **Check the logs:** the startup line logs the resolved `country` and `url`, so you can verify the correct endpoint is being used.
+- **Every MCP tool disappears at once, and the LLM errors with `tools.NN.custom.input_schema: JSON schema is invalid` (Home Assistant 2026.9+):**
+  Fixed in add-on **1.2.1** — update and restart the add-on.
+
+  Home Assistant 2026.9 replaced its schema converter (`voluptuous-openapi` → `probatio`). The new converter's `from_openapi()` / `to_openapi()` round-trip rewrites the draft 2020-12 **numeric** `exclusiveMinimum` / `exclusiveMaximum` into the obsolete draft-04 **boolean** form:
+
+  ```
+  sent by the shim:   {"exclusiveMinimum": 0, "type": "integer"}
+  after HA converts:  {"minimum": 0, "exclusiveMinimum": true, "type": "number"}
+  ```
+
+  Under draft 2020-12 `exclusiveMinimum` must be a *number*, so `true` is invalid. The Anthropic API rejects the **entire tool list** over a single bad schema — which is why *all* tools vanish, not just the affected ones. Three upstream tools carried numeric exclusive bounds: `add_products_to_shopping_list`, `remove_products_from_shopping_list`, `delete_shopping_list`.
+
+  The upstream schemas were valid the whole time; this is a workaround for the converter regression. The shim now normalizes exclusive bounds before they leave: for `integer` it uses the exact inclusive equivalent (`exclusiveMinimum: 0` → `minimum: 1`), for other types it keeps the bound and drops the keyword.
 
 ---
 
@@ -126,7 +139,7 @@ Az add-on célja, hogy a Rohlik Group MCP tooljait (Kifli.hu, Rohlik.cz, Gurkerl
 ## Mit kapsz?
 - MCP remote kliens a Kifli / Rohlik Group MCP felé (HU/CZ/AT/DE/RO)
 - `mcp-proxy` SSE szerver a Home Assistant felé
-- `mcp_schema_shim.py`: schema normalizálás (refs, unions, unsupported kulcsok, üres object properties fix)
+- `mcp_schema_shim.py`: schema normalizálás (refs, unions, unsupported kulcsok, üres object properties fix, draft-04 kizáró határok)
 
 ## Hogyan működik?
 ```
@@ -225,3 +238,16 @@ A válaszokból szedd ki a kép hivatkozást, azokat a rendszer nem tudja megjel
 - **401 / hitelesítési hiba:** rossz email/jelszó, vagy az adatok nem a kiválasztott `country`-hoz tartoznak. Győződj meg róla, hogy a fiók az adott ország szolgáltatásához tartozik.
 - **Nem jelennek meg toolok a Home Assistantban:** ellenőrizd, hogy az add-on fut, és az SSE URL pontosan `http://<ha-ip>:42783/sse`; töltsd újra az MCP integrációt.
 - **Nézd a logot:** az indulási sor kiírja a feloldott `country` és `url` értéket, így ellenőrizheted, hogy a megfelelő végpontot használja.
+- **Egyszerre eltűnik az összes MCP tool, és az LLM `tools.NN.custom.input_schema: JSON schema is invalid` hibát ad (Home Assistant 2026.9+):**
+  Javítva az add-on **1.2.1**-es verziójában — frissíts és indítsd újra az add-ont.
+
+  A Home Assistant a 2026.9-ben lecserélte a séma-konvertert (`voluptuous-openapi` → `probatio`). Az új konverter `from_openapi()` / `to_openapi()` köre a draft 2020-12-es **szám** alakú `exclusiveMinimum` / `exclusiveMaximum` kulcsot az elavult draft-04-es **boolean** alakra írja át:
+
+  ```
+  amit a shim küld:      {"exclusiveMinimum": 0, "type": "integer"}
+  amit a HA csinál belőle: {"minimum": 0, "exclusiveMinimum": true, "type": "number"}
+  ```
+
+  A draft 2020-12 az `exclusiveMinimum`-tól *számot* vár, tehát a `true` érvénytelen. Az Anthropic API pedig egyetlen hibás séma miatt a **teljes toollistát** eldobja — ezért tűnik el *az összes* tool, nem csak az érintettek. Három tool hordozott szám alakú kizáró határt: `add_products_to_shopping_list`, `remove_products_from_shopping_list`, `delete_shopping_list`.
+
+  A sémák végig érvényesek voltak; ez a konverter-regresszió megkerülése. A shim mostantól normalizálja a kizáró határokat, mielőtt kiengedi őket: `integer` típusnál pontos inkluzív megfelelőre (`exclusiveMinimum: 0` → `minimum: 1`), egyéb típusnál a határt megtartva elhagyja a kulcsot.

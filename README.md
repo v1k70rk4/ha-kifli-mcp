@@ -30,7 +30,8 @@ The add-on then appears in the Store.
 
 ## Add-on
 - Add-on folder: [`kifli_mcp_connector/`](./kifli_mcp_connector)
-- Documentation: [`kifli_mcp_connector/README.md`](./kifli_mcp_connector/README.md)
+- Documentation: [`kifli_mcp_connector/DOCS.md`](./kifli_mcp_connector/DOCS.md)
+- Changelog: [`kifli_mcp_connector/CHANGELOG.md`](./kifli_mcp_connector/CHANGELOG.md)
 
 ## Supported countries
 | `country` | Brand | MCP endpoint |
@@ -77,7 +78,8 @@ Ezután az add-on megjelenik a Store-ban.
 
 ## Add-on
 - Add-on mappa: [`kifli_mcp_connector/`](./kifli_mcp_connector)
-- Dokumentáció: [`kifli_mcp_connector/README.md`](./kifli_mcp_connector/README.md)
+- Dokumentáció: [`kifli_mcp_connector/DOCS.md`](./kifli_mcp_connector/DOCS.md)
+- Változásnapló: [`kifli_mcp_connector/CHANGELOG.md`](./kifli_mcp_connector/CHANGELOG.md)
 
 ## Támogatott országok
 | `country` | Márka | MCP végpont |

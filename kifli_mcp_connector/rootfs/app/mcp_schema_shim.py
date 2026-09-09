@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import copy
@@ -7,7 +6,7 @@ from typing import Any
 
 import anyio
 import mcp.server.stdio
-import mcp.types as types
+from mcp import types
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.server import NotificationOptions, Server
@@ -291,7 +290,7 @@ def _schema_has_non_dict_properties(schema: dict[str, Any]) -> bool:
     props = schema.get("properties")
     if not isinstance(props, dict):
         return False
-    for _, v in props.items():
+    for v in props.values():
         if not isinstance(v, dict):
             return True
     return False
@@ -351,64 +350,66 @@ async def main() -> None:
 
     server = Server(SERVER_NAME)
 
-    async with stdio_client(remote_params) as (r_read, r_write):
-        async with ClientSession(r_read, r_write) as remote:
-            await remote.initialize()
+    async with (
+        stdio_client(remote_params) as (r_read, r_write),
+        ClientSession(r_read, r_write) as remote,
+    ):
+        await remote.initialize()
 
-            @server.list_tools()
-            async def list_tools() -> list[types.Tool]:
-                res = await remote.list_tools()
-                out: list[types.Tool] = []
+        @server.list_tools()
+        async def list_tools() -> list[types.Tool]:
+            res = await remote.list_tools()
+            out: list[types.Tool] = []
 
-                for t in res.tools:
-                    name = t.name or ""
-                    name_l = name.lower()
+            for t in res.tools:
+                name = t.name or ""
+                name_l = name.lower()
 
-                    if any(w in name_l for w in IGNORE_WORDS):
-                        continue
+                if any(w in name_l for w in IGNORE_WORDS):
+                    continue
 
-                    raw = (
-                        getattr(t, "inputSchema", None)
-                        or getattr(t, "input_schema", None)
-                        or {}
-                    )
-
-                    cooked = simplify_schema(raw)
-
-                    # ha mégis maradt nem-dict property, inkább dobjuk a tool-t
-                    if isinstance(cooked, dict) and _schema_has_non_dict_properties(cooked):
-                        continue
-
-                    # Alias kulccsal validáljuk, hogy biztosan inputSchema-ként menjen át
-                    out.append(
-                        types.Tool.model_validate(
-                            {
-                                "name": name,
-                                "description": getattr(t, "description", "") or "",
-                                "inputSchema": cooked,
-                            }
-                        )
-                    )
-
-                return out
-
-            @server.call_tool()
-            async def call_tool(name: str, arguments: dict[str, Any] | None = None):
-                args = dict(arguments or {})
-                # Placeholder argot eldobjuk, mielőtt forwardolnánk a rohlik MCP felé.
-                args.pop(PLACEHOLDER_ARG, None)
-                return await remote.call_tool(name, args)
-
-            async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-                init = InitializationOptions(
-                    server_name=SERVER_NAME,
-                    server_version=SERVER_VERSION,
-                    capabilities=server.get_capabilities(
-                        notification_options=NotificationOptions(),
-                        experimental_capabilities={},
-                    ),
+                raw = (
+                    getattr(t, "inputSchema", None)
+                    or getattr(t, "input_schema", None)
+                    or {}
                 )
-                await server.run(read_stream, write_stream, init)
+
+                cooked = simplify_schema(raw)
+
+                # ha mégis maradt nem-dict property, inkább dobjuk a tool-t
+                if isinstance(cooked, dict) and _schema_has_non_dict_properties(cooked):
+                    continue
+
+                # Alias kulccsal validáljuk, hogy biztosan inputSchema-ként menjen át
+                out.append(
+                    types.Tool.model_validate(
+                        {
+                            "name": name,
+                            "description": getattr(t, "description", "") or "",
+                            "inputSchema": cooked,
+                        }
+                    )
+                )
+
+            return out
+
+        @server.call_tool()
+        async def call_tool(name: str, arguments: dict[str, Any] | None = None):
+            args = dict(arguments or {})
+            # Placeholder argot eldobjuk, mielőtt forwardolnánk a rohlik MCP felé.
+            args.pop(PLACEHOLDER_ARG, None)
+            return await remote.call_tool(name, args)
+
+        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+            init = InitializationOptions(
+                server_name=SERVER_NAME,
+                server_version=SERVER_VERSION,
+                capabilities=server.get_capabilities(
+                    notification_options=NotificationOptions(),
+                    experimental_capabilities={},
+                ),
+            )
+            await server.run(read_stream, write_stream, init)
 
 
 if __name__ == "__main__":

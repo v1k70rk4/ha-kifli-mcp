@@ -11,10 +11,8 @@ arch:
 startup: services
 init: false
 
-# 2.0: nincs host hálózat – az SSE portot a 'ports' mappelés adja, az ingress a
-# Supervisor felől éri el az add-ont.
-host_network: false
-
+# 2.0: nincs host hálózat (alapértelmezés) – az SSE portot a 'ports' mappelés
+# adja, az ingress a Supervisor felől éri el az add-ont.
 ports:
   42783/tcp: 42783
 

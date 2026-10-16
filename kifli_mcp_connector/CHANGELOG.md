@@ -2,6 +2,26 @@
 
 > 🇭🇺 **Magyarul a lap alján — [ugorj a magyar változatra](#magyar).**
 
+## 2.0.0 — 2026-10-16
+
+**Breaking — sign-in is now OAuth; the `email` / `password` options are gone**
+
+In October 2026 the Rohlik Group switched off the `rhl-email` / `rhl-pass` header login on its MCP servers. The endpoint now answers every request with:
+
+```
+401 RHL-EMAIL/RHL-PASS header login is obsolete and no longer supported. Authenticate with OAuth instead.
+```
+
+With 1.x this showed up in Home Assistant as `Timeout when listing tools` on the MCP integration and `Error getting LLM API … not found` in Assist, because the bundled `mcp-remote` sat waiting for a browser that never came.
+
+- **OAuth 2.1 (PKCE) sign-in** using the MCP Python SDK's built-in client: discovery, dynamic client registration, token exchange and **automatic refresh** (`offline_access` is requested explicitly). Tokens live in `/data/oauth/`.
+- **New "Kifli MCP" sidebar page (ingress)** to sign in. The identity server only allows a `localhost` redirect, so after logging in you paste the `http://localhost:3334/oauth/callback?code=…` URL your browser lands on into the page – it is a two-step, one-time process.
+- After a successful sign-in the add-on **reloads the Home Assistant MCP integration** itself (`homeassistant_api`), so the tools appear within seconds instead of at the next 30-minute poll.
+- While not signed in the shim returns an **empty tool list** instead of hanging, so Assist keeps working and the integration no longer sits in `setup_retry`.
+- **Removed:** Node.js and `mcp-remote` (smaller image), `host_network` (the SSE port is mapped instead), the `email` / `password` options (kept in the schema as optional no-ops so existing configurations still validate – delete them).
+
+Update, start the add-on, open **Kifli MCP** in the sidebar, sign in once.
+
 ## 1.2.1 — 2026-09-09
 
 **Fixed — every MCP tool disappeared on Home Assistant 2026.9+**
@@ -45,6 +65,26 @@ The upstream schemas were valid throughout — this is a workaround for a conver
 <a name="magyar"></a>
 
 # 🇭🇺 Változásnapló
+
+## 2.0.0 — 2026-10-16
+
+**Törő változás — a bejelentkezés OAuth lett; az `email` / `password` opciók megszűntek**
+
+2026 októberében a Rohlik Group kikapcsolta az `rhl-email` / `rhl-pass` fejléces bejelentkezést az MCP-szerverein. A végpont azóta minden kérésre ezt adja:
+
+```
+401 RHL-EMAIL/RHL-PASS header login is obsolete and no longer supported. Authenticate with OAuth instead.
+```
+
+Az 1.x-szel ez a Home Assistantban `Timeout when listing tools` hibaként jelent meg az MCP-integráción, az Assistban pedig `Error getting LLM API … not found`-ként, mert a beépített `mcp-remote` egy böngészőre várt, ami sosem jött.
+
+- **OAuth 2.1 (PKCE) bejelentkezés** az MCP Python SDK beépített kliensével: felfedezés, dinamikus kliensregisztráció, token csere és **automatikus frissítés** (az `offline_access` scope-ot kifejezetten kérjük). A tokenek a `/data/oauth/` alatt vannak.
+- **Új „Kifli MCP” oldal az oldalsávban (ingress)** a bejelentkezéshez. Az identity-szerver csak `localhost` visszahívást enged, ezért bejelentkezés után a böngésző által mutatott `http://localhost:3334/oauth/callback?code=…` címet kell bemásolni az oldalra – kétlépéses, egyszeri folyamat.
+- Sikeres bejelentkezés után az add-on **maga újratölti a Home Assistant MCP-integrációját** (`homeassistant_api`), így a toolok másodperceken belül megjelennek, nem a következő 30 perces lekérdezésnél.
+- Amíg nincs bejelentkezve, a shim **üres tool-listát** ad lógás helyett, így az Assist működik tovább, és az integráció nem ragad `setup_retry`-ban.
+- **Eltávolítva:** Node.js és `mcp-remote` (kisebb image), a `host_network` (helyette port-mappelés), az `email` / `password` opciók (a sémában opcionális, hatástalan kulcsként maradtak, hogy a meglévő konfiguráció érvényes maradjon – töröld őket).
+
+Frissíts, indítsd el az add-ont, nyisd meg a **Kifli MCP** oldalt az oldalsávban, jelentkezz be egyszer.
 
 ## 1.2.1 — 2026-09-09
 

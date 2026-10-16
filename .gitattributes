@@ -1,0 +1,4 @@
+* text=auto
+kifli_mcp_connector/rootfs/** text eol=lf
+*.py text eol=lf
+*.yaml text eol=lf

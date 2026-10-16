@@ -6,22 +6,21 @@ ENV PYTHONUNBUFFERED=1
 
 RUN apk add --no-cache \
     python3 py3-pip \
-    nodejs npm \
     ca-certificates bash
 
 # Virtualenv (PEP668 miatt)
 RUN python3 -m venv /opt/venv \
  && /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Python MCP stack
+# Python MCP stack. 2.0 óta nincs Node / mcp-remote: az upstream OAuth-ot az
+# mcp SDK beépített kliense intézi, az ingress oldalt a starlette/uvicorn adja
+# (mindkettő az mcp csomag függősége).
 RUN /opt/venv/bin/pip install --no-cache-dir \
     "mcp==1.26.0" \
-    "mcp-proxy==0.11.0"
+    "mcp-proxy==0.11.0" \
+    "python-multipart>=0.0.9"
 
-# Node mcp-remote
-RUN npm install -g mcp-remote@0.1.37
-
-# Rootfs bemásolása (ebben lesz /app/mcp_schema_shim.py is)
+# Rootfs bemásolása (ebben lesz /app/mcp_schema_shim.py és /app/kifli_auth.py is)
 COPY rootfs/ /
 
 RUN chmod a+x /etc/services.d/kifli-mcp/run \

@@ -1,19 +1,25 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import copy
+import logging
 import os
+from pathlib import Path
 from typing import Any
 
 import anyio
 import mcp.server.stdio
+import uvicorn
+from kifli_auth import AuthManager, build_app, reload_ha_mcp_entry, setup_logging
 from mcp import types
 from mcp.client.session import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.streamable_http import streamablehttp_client
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
 SERVER_NAME = "kifli-schema-shim"
-SERVER_VERSION = "1.0.3"
+SERVER_VERSION = "2.0.0"
 
 # Tool kihagyó rész, a HA / OpenAI schema-konverzió el tud hasalni rajtuk. v1.1 már kezeli.
 IGNORE_WORDS = {
@@ -322,84 +328,165 @@ def simplify_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
     return base
 
 
+class Upstream:
+    """A Rohlik Group MCP felé nyitott, hitelesített kapcsolat.
+
+    Csak bejelentkezés után csatlakozik; ha a kapcsolat elszáll, újrapróbálja.
+    Amíg nincs kapcsolat, a shim üres tool-listát ad – így a HA MCP-integráció
+    betölt (nem időtúllépés), és az Assist többi része zavartalanul működik.
+    """
+
+    def __init__(self, url: str, auth: AuthManager) -> None:
+        self.url = url
+        self.auth = auth
+        self.session: ClientSession | None = None
+        self.ready = asyncio.Event()
+        self._lost = asyncio.Event()
+        self.log = logging.getLogger("kifli.upstream")
+
+    async def run(self) -> None:
+        backoff = 5
+        while True:
+            await self.auth.logged_in.wait()
+            self._lost = asyncio.Event()
+            try:
+                async with (
+                    streamablehttp_client(self.url, auth=self.auth.provider) as (r, w, _),
+                    ClientSession(r, w) as session,
+                ):
+                    await session.initialize()
+                    self.session = session
+                    self.ready.set()
+                    backoff = 5
+                    self.log.info("Upstream MCP kapcsolat él: %s", self.url)
+                    # addig tartjuk nyitva, amíg egy hívás nem jelzi, hogy elszállt
+                    await self._lost.wait()
+            except Exception as ex:  # noqa: BLE001
+                self.log.warning(
+                    "Upstream kapcsolat hiba (%s: %s) – újra %ss múlva", type(ex).__name__, ex, backoff
+                )
+            finally:
+                self.session = None
+                self.ready.clear()
+            if not self.auth.logged_in.is_set():
+                continue  # kijelentkeztek: várunk az új bejelentkezésre
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 120)
+
+    def mark_lost(self) -> None:
+        self._lost.set()
+
+
 async def main() -> None:
+    setup_logging()
+    log = logging.getLogger("kifli.shim")
+
     url = os.environ.get("KIFLI_MCP_URL", "https://mcp.kifli.hu/mcp")
-    transport = os.environ.get("KIFLI_TRANSPORT", "http-first")
+    data_dir = Path(os.environ.get("KIFLI_DATA_DIR", "/data"))
+    sse_port = int(os.environ.get("KIFLI_PORT", "42783"))
+    ingress_port = int(os.environ.get("KIFLI_INGRESS_PORT", "42784"))
 
-    email = os.environ.get("RHL_EMAIL") or ""
-    password = os.environ.get("RHL_PASS") or ""
-    if not email or email == "null":
-        raise SystemExit("RHL_EMAIL nincs beállítva")
-    if not password or password == "null":
-        raise SystemExit("RHL_PASS nincs beállítva")
+    auth = AuthManager(url, data_dir)
+    upstream = Upstream(url, auth)
 
-    remote_params = StdioServerParameters(
-        command="mcp-remote",
-        args=[
-            url,
-            "--transport",
-            transport,
-            "--header",
-            f"rhl-email:{email}",
-            "--header",
-            f"rhl-pass:{password}",
-            "--silent",
-        ],
-        env=os.environ.copy(),
+    async def on_login_ok() -> str:
+        # megvárjuk, hogy az upstream kapcsolat is felálljon, és csak utána
+        # töltetjük újra a HA MCP-integrációt, hogy már a toolokat lássa
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(upstream.ready.wait(), timeout=30)
+        note = await reload_ha_mcp_entry(sse_port)
+        log.info("HA MCP integráció újratöltés: %s", note)
+        return note
+
+    web = uvicorn.Server(
+        uvicorn.Config(
+            build_app(auth, sse_port, on_login_ok),
+            host="0.0.0.0",
+            port=ingress_port,
+            log_level="warning",
+            proxy_headers=True,
+            forwarded_allow_ips="*",
+        )
     )
+    web.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+
+    async def serve_web() -> None:
+        try:
+            await web.serve()
+        except Exception as ex:  # noqa: BLE001
+            log.error("Ingress oldal nem indult (%s) – a bejelentkező link a naplóban lesz.", ex)
+
+    async def initial_login() -> None:
+        try:
+            await auth.ensure_logged_in()
+            await on_login_ok()
+        except Exception as ex:  # noqa: BLE001
+            auth.status = "error"
+            auth.error = f"{type(ex).__name__}: {ex}"
+            log.error("Kifli OAuth bejelentkezés sikertelen: %s", auth.error)
 
     server = Server(SERVER_NAME)
 
-    async with (
-        stdio_client(remote_params) as (r_read, r_write),
-        ClientSession(r_read, r_write) as remote,
-    ):
-        await remote.initialize()
-
-        @server.list_tools()
-        async def list_tools() -> list[types.Tool]:
+    @server.list_tools()
+    async def list_tools() -> list[types.Tool]:
+        remote = upstream.session
+        if remote is None:
+            log.info("tools/list bejelentkezés nélkül → üres lista (nyisd meg az add-on oldalát)")
+            return []
+        try:
             res = await remote.list_tools()
-            out: list[types.Tool] = []
+        except Exception:
+            upstream.mark_lost()
+            raise
+        out: list[types.Tool] = []
 
-            for t in res.tools:
-                name = t.name or ""
-                name_l = name.lower()
+        for t in res.tools:
+            name = t.name or ""
+            name_l = name.lower()
 
-                if any(w in name_l for w in IGNORE_WORDS):
-                    continue
+            if any(w in name_l for w in IGNORE_WORDS):
+                continue
 
-                raw = (
-                    getattr(t, "inputSchema", None)
-                    or getattr(t, "input_schema", None)
-                    or {}
+            raw = getattr(t, "inputSchema", None) or getattr(t, "input_schema", None) or {}
+
+            cooked = simplify_schema(raw)
+
+            # ha mégis maradt nem-dict property, inkább dobjuk a tool-t
+            if isinstance(cooked, dict) and _schema_has_non_dict_properties(cooked):
+                continue
+
+            # Alias kulccsal validáljuk, hogy biztosan inputSchema-ként menjen át
+            out.append(
+                types.Tool.model_validate(
+                    {
+                        "name": name,
+                        "description": getattr(t, "description", "") or "",
+                        "inputSchema": cooked,
+                    }
                 )
+            )
 
-                cooked = simplify_schema(raw)
+        return out
 
-                # ha mégis maradt nem-dict property, inkább dobjuk a tool-t
-                if isinstance(cooked, dict) and _schema_has_non_dict_properties(cooked):
-                    continue
-
-                # Alias kulccsal validáljuk, hogy biztosan inputSchema-ként menjen át
-                out.append(
-                    types.Tool.model_validate(
-                        {
-                            "name": name,
-                            "description": getattr(t, "description", "") or "",
-                            "inputSchema": cooked,
-                        }
-                    )
-                )
-
-            return out
-
-        @server.call_tool()
-        async def call_tool(name: str, arguments: dict[str, Any] | None = None):
-            args = dict(arguments or {})
-            # Placeholder argot eldobjuk, mielőtt forwardolnánk a rohlik MCP felé.
-            args.pop(PLACEHOLDER_ARG, None)
+    @server.call_tool()
+    async def call_tool(name: str, arguments: dict[str, Any] | None = None):
+        remote = upstream.session
+        if remote is None:
+            raise RuntimeError(
+                "A Kifli MCP nincs bejelentkezve. Nyisd meg a 'Kifli MCP' oldalt a Home Assistant "
+                "oldalsávjában, és jelentkezz be. / Not logged in to the Kifli MCP – open the "
+                "'Kifli MCP' panel in the Home Assistant sidebar and sign in."
+            )
+        args = dict(arguments or {})
+        # Placeholder argot eldobjuk, mielőtt forwardolnánk a rohlik MCP felé.
+        args.pop(PLACEHOLDER_ARG, None)
+        try:
             return await remote.call_tool(name, args)
+        except Exception:
+            upstream.mark_lost()
+            raise
 
+    async def serve_stdio() -> None:
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
             init = InitializationOptions(
                 server_name=SERVER_NAME,
@@ -410,6 +497,17 @@ async def main() -> None:
                 ),
             )
             await server.run(read_stream, write_stream, init)
+
+    log.info(
+        "Kifli schema shim %s indul (url=%s, ingress port=%s, data=%s)",
+        SERVER_VERSION, url, ingress_port, data_dir,
+    )
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(serve_web)
+        tg.start_soon(upstream.run)
+        tg.start_soon(initial_login)
+        await serve_stdio()
+        tg.cancel_scope.cancel()
 
 
 if __name__ == "__main__":

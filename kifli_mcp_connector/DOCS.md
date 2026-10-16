@@ -9,7 +9,8 @@
 This add-on exposes the Rohlik Group MCP tools (Kifli.hu, Rohlik.cz, Gurkerl.at, Knuspr.de, Sezamo.ro) on an **SSE endpoint** that Home Assistant can consume directly, while a **schema shim** normalizes the tool input schemas to satisfy the stricter Home Assistant / OpenAI function-tooling expectations.
 
 ## What you get
-- MCP remote client to the Kifli / Rohlik Group MCP (HU/CZ/AT/DE/RO)
+- OAuth 2.1 (PKCE) sign-in to the Kifli / Rohlik Group MCP (HU/CZ/AT/DE/RO) with automatic token refresh
+- A **Kifli MCP** page in the Home Assistant sidebar (ingress) to sign in – no credentials stored in the add-on
 - `mcp-proxy` SSE server towards Home Assistant
 - `mcp_schema_shim.py`: schema normalization (refs, unions, unsupported keys, empty-object-properties fix, draft-04 exclusive bounds)
 
@@ -18,19 +19,32 @@ This add-on exposes the Rohlik Group MCP tools (Kifli.hu, Rohlik.cz, Gurkerl.at,
 Home Assistant (MCP client)
         │  SSE  →  http://<ha-ip>:42783/sse
         ▼
-   mcp-proxy ──stdio──► mcp_schema_shim.py ──► mcp-remote ──HTTPS──► Rohlik Group MCP
-                                                (rhl-email / rhl-pass headers)
+   mcp-proxy ──stdio──► mcp_schema_shim.py ──HTTPS (OAuth Bearer)──► Rohlik Group MCP
+                              │
+                              └── ingress page "Kifli MCP" (sign-in)
 ```
+
+Since October 2026 the Rohlik Group MCP only accepts **OAuth 2.1** tokens (the old `rhl-email` / `rhl-pass` header login was switched off server-side). The add-on registers itself as an OAuth client, you sign in once in your browser, and the token is refreshed automatically from then on.
 
 ## Prerequisites
 - A working **Rohlik Group account** in your country (e.g. Kifli.hu for `hu`, Rohlik.cz for `cz`, …).
-- The email/password you use to log in to that country's web shop.
 
 ## Installation
 1. Add the repository:
    - `https://github.com/v1k70rk4/ha-kifli-mcp`
 2. Install from the Add-on Store: **Rohlik Group (hu, cz, at, de, ro) MCP Connector**
-3. Configure (country + email/password), then start it.
+3. Pick your `country`, start the add-on.
+4. Open **Kifli MCP** in the Home Assistant sidebar and sign in (see below).
+
+### Signing in (OAuth)
+The Rohlik identity server only allows a `http://localhost:…` redirect for the sign-in, but the add-on runs on your Home Assistant box without a browser – so the last step is a copy-paste:
+
+1. On the **Kifli MCP** sidebar page click **Sign in**. Log in at `identity.kifli.hu` (same account as the web shop).
+2. Your browser is redirected to `http://localhost:3334/oauth/callback?code=…&state=…` and shows **"This site can't be reached"**. That is expected.
+3. Copy the **whole URL** from the address bar and paste it into the box on the Kifli MCP page, then **Submit**.
+4. The add-on exchanges the code for a token, stores it under `/data/oauth/` and reloads the Home Assistant MCP integration, so the tools appear within seconds.
+
+Until you sign in the add-on serves an **empty tool list** (instead of timing out), so the rest of Assist keeps working. If the token ever becomes invalid, the page shows the sign-in again. **Log out** on the page deletes the stored token.
 
 ## Configuration
 
@@ -39,20 +53,17 @@ Home Assistant (MCP client)
 |-----|------|---------|-------------|
 | `port` | int | `42783` | SSE server port |
 | `country` | list | `hu` | Rohlik Group country: `hu`, `cz`, `at`, `de`, `ro` (see below) |
-| `email` | string | `""` | Login email for the selected country's service |
-| `password` | password | `""` | Login password for the selected country's service |
 | `mcp_url` | string | `""` | (Optional) Custom MCP endpoint; overrides the `country`-based URL |
+| `email`, `password` | – | – | **Deprecated since 2.0**, ignored. Left in the schema only so old configurations still validate – you can delete them. |
 
 ### Example
 ```yaml
 port: 42783
 country: "hu"
-email: "user@example.com"
-password: "********"
 ```
 
 ### Supported countries (Rohlik Group)
-The `country` option points to that country's MCP endpoint. The email/password you provide must belong to **an account of that country's service** (the auth headers are country-agnostic: `rhl-email` / `rhl-pass`).
+The `country` option points to that country's MCP endpoint. Sign in with **an account of that country's service**.
 
 | `country` | Brand | MCP endpoint |
 |-----------|-------|--------------|
@@ -99,15 +110,17 @@ Strip image links from the answers — the system cannot display them.
 ```
 
 ## Networking & security
-- The add-on runs in **host network** mode and listens on port **42783** (SSE at `/sse`).
-- Your email/password are stored in the Home Assistant add-on configuration and sent to the selected MCP endpoint as `rhl-email` / `rhl-pass` headers over HTTPS.
-- `mcp-remote` auth/cache is persisted under `/data/.mcp-auth`.
+- The add-on listens on port **42783** (SSE at `/sse`, mapped to the host) and serves the sign-in page through Home Assistant **ingress** only.
+- No password is stored: the add-on keeps an OAuth access/refresh token under `/data/oauth/` (mode 600) and uses it as a Bearer token over HTTPS.
+- `homeassistant_api: true` is used for one thing: reloading the MCP integration after a successful sign-in.
 
 ## Supported architectures
 `amd64`, `aarch64`. (`armv7` / `armhf` were removed — unsupported by Home Assistant since 2025.12.)
 
 ## Troubleshooting
-- **401 / authentication error:** wrong email/password, or the credentials don't match the selected `country`. Make sure the account belongs to that country's service.
+- **No tools, Assist says the Kifli MCP is not signed in:** open **Kifli MCP** in the sidebar and complete the sign-in (see *Signing in*). Until then the tool list is deliberately empty.
+- **The browser says "can't reach localhost:3334" after login:** that is the normal last step – copy the URL and paste it on the Kifli MCP page.
+- **"RHL-EMAIL/RHL-PASS header login is obsolete" in the log / `Timeout when listing tools` in Home Assistant:** you are on 1.x; update to 2.0 and sign in via OAuth.
 - **No tools appear in Home Assistant:** confirm the add-on is running and the SSE URL is exactly `http://<ha-ip>:42783/sse`; reload the MCP integration.
 - **Check the logs:** the startup line logs the resolved `country` and `url`, so you can verify the correct endpoint is being used.
 - **Every MCP tool disappears at once, and the LLM errors with `tools.NN.custom.input_schema: JSON schema is invalid` (Home Assistant 2026.9+):**
@@ -137,7 +150,8 @@ Strip image links from the answers — the system cannot display them.
 Az add-on célja, hogy a Rohlik Group MCP tooljait (Kifli.hu, Rohlik.cz, Gurkerl.at, Knuspr.de, Sezamo.ro) egy Home Assistantból egyszerűen elérhető **SSE endpointon** tegye elérhetővé, miközben a tool input schema-kat „megszelídíti” a Home Assistant / OpenAI function tooling elvárásaihoz.
 
 ## Mit kapsz?
-- MCP remote kliens a Kifli / Rohlik Group MCP felé (HU/CZ/AT/DE/RO)
+- OAuth 2.1 (PKCE) bejelentkezés a Kifli / Rohlik Group MCP felé (HU/CZ/AT/DE/RO), automatikus token-frissítéssel
+- **Kifli MCP** oldal a Home Assistant oldalsávjában (ingress) a bejelentkezéshez – jelszó nem tárolódik az add-onban
 - `mcp-proxy` SSE szerver a Home Assistant felé
 - `mcp_schema_shim.py`: schema normalizálás (refs, unions, unsupported kulcsok, üres object properties fix, draft-04 kizáró határok)
 
@@ -146,19 +160,32 @@ Az add-on célja, hogy a Rohlik Group MCP tooljait (Kifli.hu, Rohlik.cz, Gurkerl
 Home Assistant (MCP kliens)
         │  SSE  →  http://<ha-ip>:42783/sse
         ▼
-   mcp-proxy ──stdio──► mcp_schema_shim.py ──► mcp-remote ──HTTPS──► Rohlik Group MCP
-                                                (rhl-email / rhl-pass fejlécek)
+   mcp-proxy ──stdio──► mcp_schema_shim.py ──HTTPS (OAuth Bearer)──► Rohlik Group MCP
+                              │
+                              └── ingress oldal „Kifli MCP” (bejelentkezés)
 ```
+
+2026 októberétől a Rohlik Group MCP csak **OAuth 2.1** tokent fogad el (a régi `rhl-email` / `rhl-pass` fejléces bejelentkezést szerveroldalon kikapcsolták). Az add-on regisztrálja magát OAuth-kliensként, te egyszer bejelentkezel a böngésződben, a tokent onnantól automatikusan frissíti.
 
 ## Előfeltételek
 - Működő **Rohlik Group fiók** a saját országodban (pl. `hu`-hoz Kifli.hu, `cz`-hez Rohlik.cz, …).
-- Az adott ország webshopjába belépő email/jelszó.
 
 ## Telepítés
 1. Add hozzá a repository-t:
    - `https://github.com/v1k70rk4/ha-kifli-mcp`
 2. Add-on Store-ban telepítsd: **Rohlik Group (hu, cz, at, de, ro) MCP Connector**
-3. Konfiguráld (ország + email/jelszó), majd indítsd el.
+3. Válaszd ki a `country`-t, indítsd el az add-ont.
+4. Nyisd meg a **Kifli MCP** oldalt a Home Assistant oldalsávjában, és jelentkezz be (lásd lent).
+
+### Bejelentkezés (OAuth)
+A Rohlik identity-szervere csak `http://localhost:…` visszahívási címet enged a bejelentkezéshez, az add-on viszont a Home Assistant gépen, böngésző nélkül fut – ezért az utolsó lépés egy másolás-beillesztés:
+
+1. A **Kifli MCP** oldalon kattints a **Bejelentkezés** gombra. Jelentkezz be az `identity.kifli.hu` oldalon (ugyanaz a fiók, mint a webshopban).
+2. A böngésző a `http://localhost:3334/oauth/callback?code=…&state=…` címre irányít, és azt írja, hogy **„nem lehet elérni az oldalt”**. Ez így normális.
+3. Másold ki a **teljes címet** a címsorból, illeszd be a Kifli MCP oldal mezőjébe, majd **Beküldés**.
+4. Az add-on tokenre cseréli a kódot, elmenti a `/data/oauth/` alá, és újratölti a Home Assistant MCP-integrációját – a toolok másodperceken belül megjelennek.
+
+Amíg nem jelentkezel be, az add-on **üres tool-listát** ad (nem időtúllépést), így az Assist többi része zavartalanul működik. Ha a token valaha érvénytelenné válik, az oldal újra a bejelentkezést mutatja. A **Kijelentkezés** gomb törli a tárolt tokent.
 
 ## Konfiguráció
 
@@ -167,20 +194,17 @@ Home Assistant (MCP kliens)
 |------|------|------|--------|
 | `port` | int | `42783` | SSE szerver port |
 | `country` | list | `hu` | Rohlik Group ország: `hu`, `cz`, `at`, `de`, `ro` (lásd lentebb) |
-| `email` | string | `""` | A kiválasztott ország szolgáltatásához tartozó login email |
-| `password` | password | `""` | A kiválasztott ország szolgáltatásához tartozó jelszó |
 | `mcp_url` | string | `""` | (Opcionális) Egyedi MCP végpont; ha kitöltöd, felülírja a `country` szerinti URL-t |
+| `email`, `password` | – | – | **2.0 óta elavult**, figyelmen kívül marad. Csak azért van a sémában, hogy a régi konfiguráció ne akadjon fenn az ellenőrzésen – nyugodtan töröld. |
 
 ### Példa
 ```yaml
 port: 42783
 country: "hu"
-email: "user@example.com"
-password: "********"
 ```
 
 ### Támogatott országok (Rohlik Group)
-A `country` opció a megfelelő ország MCP végpontjára mutat. A megadott email/jelszó **az adott ország szolgáltatásához tartozó fiók** adata (a hitelesítő fejlécek ország-függetlenek: `rhl-email` / `rhl-pass`).
+A `country` opció a megfelelő ország MCP végpontjára mutat. **Az adott ország szolgáltatásához tartozó fiókkal** jelentkezz be.
 
 | `country` | Márka | MCP végpont |
 |-----------|-------|-------------|
@@ -227,15 +251,17 @@ A válaszokból szedd ki a kép hivatkozást, azokat a rendszer nem tudja megjel
 ```
 
 ## Hálózat és biztonság
-- Az add-on **host network** módban fut, és a **42783** porton figyel (SSE a `/sse` útvonalon).
-- Az email/jelszó a Home Assistant add-on konfigurációjában tárolódik, és a kiválasztott MCP végpontra `rhl-email` / `rhl-pass` fejlécként, HTTPS-en megy.
-- A `mcp-remote` auth/cache a `/data/.mcp-auth` alatt tárolódik tartósan.
+- Az add-on a **42783** porton figyel (SSE a `/sse` útvonalon, a hostra mappelve), a bejelentkező oldalt kizárólag a Home Assistant **ingress**-en át szolgálja ki.
+- Jelszó nem tárolódik: az add-on egy OAuth access/refresh tokent tart a `/data/oauth/` alatt (600-as jogokkal), és azt küldi Bearer tokenként HTTPS-en.
+- A `homeassistant_api: true` egyetlen dologra kell: sikeres bejelentkezés után újratölti az MCP-integrációt.
 
 ## Támogatott architektúrák
 `amd64`, `aarch64`. (Az `armv7` / `armhf` eltávolítva — a Home Assistant 2025.12 óta nem támogatja.)
 
 ## Hibaelhárítás
-- **401 / hitelesítési hiba:** rossz email/jelszó, vagy az adatok nem a kiválasztott `country`-hoz tartoznak. Győződj meg róla, hogy a fiók az adott ország szolgáltatásához tartozik.
+- **Nincsenek toolok, az Assist azt mondja, a Kifli MCP nincs bejelentkezve:** nyisd meg a **Kifli MCP** oldalt az oldalsávban, és vidd végig a bejelentkezést (lásd *Bejelentkezés*). Addig a tool-lista szándékosan üres.
+- **Bejelentkezés után a böngésző „nem lehet elérni a localhost:3334” hibát ír:** ez a normális utolsó lépés – másold ki a címet, és illeszd be a Kifli MCP oldalon.
+- **„RHL-EMAIL/RHL-PASS header login is obsolete” a logban / `Timeout when listing tools` a Home Assistantban:** 1.x verzión vagy; frissíts 2.0-ra, és jelentkezz be OAuth-tal.
 - **Nem jelennek meg toolok a Home Assistantban:** ellenőrizd, hogy az add-on fut, és az SSE URL pontosan `http://<ha-ip>:42783/sse`; töltsd újra az MCP integrációt.
 - **Nézd a logot:** az indulási sor kiírja a feloldott `country` és `url` értéket, így ellenőrizheted, hogy a megfelelő végpontot használja.
 - **Egyszerre eltűnik az összes MCP tool, és az LLM `tools.NN.custom.input_schema: JSON schema is invalid` hibát ad (Home Assistant 2026.9+):**

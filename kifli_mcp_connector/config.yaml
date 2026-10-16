@@ -1,7 +1,7 @@
 name: "Rohlik Group (hu, cz, at, de, ro) MCP Connector"
 slug: "kifli_mcp_connector"
-version: "1.2.1"
-description: "Bridges the Rohlik Group MCP (hu/cz/at/de/ro) to SSE for the Home Assistant MCP client, with schema shim."
+version: "2.0.0"
+description: "Bridges the Rohlik Group MCP (hu/cz/at/de/ro) to SSE for the Home Assistant MCP client, with OAuth sign-in and schema shim."
 url: "https://github.com/v1k70rk4/ha-kifli-mcp"
 
 arch:
@@ -11,26 +11,35 @@ arch:
 startup: services
 init: false
 
-host_network: true
+# 2.0: nincs host hálózat – az SSE portot a 'ports' mappelés adja, az ingress a
+# Supervisor felől éri el az add-ont.
+host_network: false
 
 ports:
   42783/tcp: 42783
 
 ports_description:
-  42783/tcp: "MCP Proxy SSE endpoint"
+  42783/tcp: "MCP Proxy SSE endpoint (Home Assistant MCP integration URL: http://<ha-ip>:42783/sse)"
 
-webui: "http://[HOST]:[PORT:42783]"
+# Bejelentkező oldal a HA oldalsávban (OAuth kód beillesztése)
+ingress: true
+ingress_port: 42784
+panel_icon: "mdi:cart"
+panel_title: "Kifli MCP"
+
+# A sikeres bejelentkezés után az add-on újratölti a HA MCP-integrációt
+homeassistant_api: true
 
 options:
   port: 42783
   country: "hu"
-  email: ""
-  password: ""
   mcp_url: ""
 
 schema:
   port: int
   country: "list(hu|cz|at|de|ro)?"
-  email: str
-  password: password
   mcp_url: "str?"
+  # 1.x maradvány – 2.0 óta nem használt, csak azért van itt, hogy a régi
+  # konfiguráció ne akadjon fenn a sémaellenőrzésen
+  email: "str?"
+  password: "password?"

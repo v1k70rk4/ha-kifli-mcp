@@ -5,6 +5,7 @@
 [![Build add-on](https://github.com/v1k70rk4/ha-kifli-mcp/actions/workflows/build.yaml/badge.svg)](https://github.com/v1k70rk4/ha-kifli-mcp/actions/workflows/build.yaml)
 [![Lint add-on](https://github.com/v1k70rk4/ha-kifli-mcp/actions/workflows/lint-addon.yaml/badge.svg)](https://github.com/v1k70rk4/ha-kifli-mcp/actions/workflows/lint-addon.yaml)
 [![Lint with Ruff](https://github.com/v1k70rk4/ha-kifli-mcp/actions/workflows/ruff.yaml/badge.svg)](https://github.com/v1k70rk4/ha-kifli-mcp/actions/workflows/ruff.yaml)
+[![Test](https://github.com/v1k70rk4/ha-kifli-mcp/actions/workflows/test.yaml/badge.svg)](https://github.com/v1k70rk4/ha-kifli-mcp/actions/workflows/test.yaml)
 [![CodeQL](https://github.com/v1k70rk4/ha-kifli-mcp/actions/workflows/codeql.yaml/badge.svg)](https://github.com/v1k70rk4/ha-kifli-mcp/actions/workflows/codeql.yaml)
 
 Home Assistant add-on repository: **Rohlik Group (hu, cz, at, de, ro) MCP Connector**.

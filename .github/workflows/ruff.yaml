@@ -14,4 +14,4 @@ jobs:
         with:
           python-version: "3.13"
       - run: "python -m pip install ruff"
-      - run: "ruff check kifli_mcp_connector/rootfs/app"
+      - run: "ruff check kifli_mcp_connector/rootfs/app tests"

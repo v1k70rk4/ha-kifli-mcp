@@ -2,6 +2,23 @@
 
 > 🇭🇺 **Magyarul a lap alján — [ugorj a magyar változatra](#magyar).**
 
+## 2.1.0 — 2026-10-23
+
+**New — turn individual Kifli tools on or off**
+
+So a voice assistant can, for example, search, fill the cart and read orders, but cannot pay, book a timeslot or cancel an order.
+
+- **Tools card** on the **Kifli MCP** sidebar page, with a checkbox per upstream tool. Unchecked tools are left out of the tool list Home Assistant sees **and refused when called**, so they cannot be used even by a client that connects to the SSE port directly.
+- Saving reloads the Home Assistant MCP integration, so the change is live within seconds. If that reload fails, the page says so instead of reporting success.
+- **Nothing disappears on update:** on the first start every tool currently offered is enabled.
+- **New or removed upstream tools are reported once:** a persistent notification, plus the `kifli_mcp_new_tool` / `kifli_mcp_removed_tool` events for automations. New tools start **disabled** unless the new `new_tools_enabled` option is on.
+- A tool that disappears upstream for a while keeps its on/off setting when it comes back.
+- If the settings file (`/data/tool_settings.json`) is ever corrupted, every tool is treated as new instead of all being switched on: with the default `new_tools_enabled: false` they come in disabled, with a notification. The broken file is kept as `tool_settings.corrupt`.
+- Tool descriptions on the page are shown in Hungarian when `country` is `hu` (the model still gets the upstream text).
+- Docs: the SSE port has no authentication of its own – the *Networking & security* section explains how to keep it internal.
+
+Thanks to [@wenandras](https://github.com/wenandras) for the feature and for testing it on a Home Assistant Green with a live account ([#3](https://github.com/v1k70rk4/ha-kifli-mcp/pull/3)).
+
 ## 2.0.1 — 2026-10-22
 
 **Fixed — the add-on did not build on aarch64 (e.g. Home Assistant Green)**
@@ -80,6 +97,23 @@ The upstream schemas were valid throughout — this is a workaround for a conver
 <a name="magyar"></a>
 
 # 🇭🇺 Változásnapló
+
+## 2.1.0 — 2026-10-23
+
+**Új — a Kifli-funkciók egyenként ki/be kapcsolhatók**
+
+Így a hangasszisztens például kereshet, kosárba tehet és láthatja a rendeléseket, de fizetni, idősávot foglalni vagy rendelést lemondani nem tud.
+
+- **Funkciók kártya** a **Kifli MCP** oldalon az oldalsávban, minden upstream eszköz mellett egy jelölőnégyzettel. A kikapcsolt funkció kimarad a Home Assistant által látott listából, **és hívásra is elutasítja** az add-on, így akkor sem használható, ha valaki közvetlenül az SSE portra csatlakozik.
+- Mentéskor a HA MCP-integráció újratöltődik, a változás másodperceken belül él. Ha az újratöltés nem sikerül, az oldal ezt jelzi, nem sikert.
+- **Frissítéskor semmi nem tűnik el:** az első induláskor minden épp elérhető funkció bekapcsolt.
+- **Új vagy megszűnt upstream funkcióról egyszer szól:** állandó értesítés, valamint `kifli_mcp_new_tool` / `kifli_mcp_removed_tool` esemény automatizáláshoz. Az új funkció **kikapcsolva** érkezik, hacsak az új `new_tools_enabled` opció nincs bekapcsolva.
+- Ha egy funkció egy időre eltűnik az upstreamről, visszatéréskor megtartja a ki/be állapotát.
+- Ha a beállításfájl (`/data/tool_settings.json`) valaha megsérülne, nem kapcsol be minden, hanem minden funkciót újnak tekint: az alapértelmezett `new_tools_enabled: false` mellett kikapcsolva érkeznek, értesítéssel. A hibás fájl `tool_settings.corrupt` néven megmarad.
+- `country: hu` esetén az oldalon magyar eszközleírások látszanak (a modell továbbra is az eredeti leírást kapja).
+- Dokumentáció: az SSE portnak nincs saját hitelesítése – a *Hálózat és biztonság* rész leírja, hogyan tartható belső használatban.
+
+Köszönjük [@wenandras](https://github.com/wenandras) funkcióját és a Home Assistant Greenen, éles fiókkal végzett tesztet ([#3](https://github.com/v1k70rk4/ha-kifli-mcp/pull/3)).
 
 ## 2.0.1 — 2026-10-22
 

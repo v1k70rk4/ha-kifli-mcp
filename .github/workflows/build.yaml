@@ -7,13 +7,25 @@ on:
 
 jobs:
   build:
-    runs-on: "ubuntu-latest"
+    # Build the way the Supervisor does: pass only BUILD_ARCH (no BUILD_FROM), on a native
+    # runner for each architecture, so the Dockerfile's per-architecture base image is
+    # tested too (in 2.0.0 this failed on aarch64, see #1).
+    name: "build (${{ matrix.arch }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: "amd64"
+            runner: "ubuntu-latest"
+          - arch: "aarch64"
+            runner: "ubuntu-24.04-arm"
+    runs-on: "${{ matrix.runner }}"
     steps:
       - name: Checkout
         uses: "actions/checkout@v6"
-      - name: Test build (amd64)
+      - name: "Test build (${{ matrix.arch }})"
         run: |
           docker build \
-            --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest \
-            --tag local/kifli_mcp_connector:test \
+            --build-arg BUILD_ARCH=${{ matrix.arch }} \
+            --tag local/kifli_mcp_connector:${{ matrix.arch }} \
             kifli_mcp_connector

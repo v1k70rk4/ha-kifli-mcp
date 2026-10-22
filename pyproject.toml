@@ -1,0 +1,8 @@
+# For the tests only – the add-on itself runs from the kifli_mcp_connector/ Docker image.
+# Run: python -m pip install -r tests/requirements.txt && python -m pytest
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# the add-on's Python modules (mcp_schema_shim, kifli_auth, tool_settings) are imported from here
+pythonpath = ["kifli_mcp_connector/rootfs/app"]
+addopts = "-ra"

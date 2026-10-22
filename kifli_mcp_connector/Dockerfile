@@ -1,4 +1,8 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
+# A Supervisor a BUILD_ARCH-ot mindig átadja (amd64 / aarch64), a BUILD_FROM-ot
+# viszont build.yaml nélkül nem – ezért az alapképet az architektúrából képezzük,
+# különben aarch64-en (pl. HA Green) az amd64 kép miatt elbukik a build.
+ARG BUILD_ARCH=amd64
+ARG BUILD_FROM=ghcr.io/home-assistant/${BUILD_ARCH}-base:latest
 FROM ${BUILD_FROM}
 
 ENV LANG=C.UTF-8

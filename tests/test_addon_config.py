@@ -62,14 +62,34 @@ def test_run_script_maps_exactly_the_expected_countries():
     assert _run_branches() == EXPECTED_COUNTRY_URLS
 
 
-def test_test_requirements_match_dockerfile_pins():
-    docker = dict(re.findall(r'"([a-z0-9-]+)==([0-9.]+)"', (ADDON / "Dockerfile").read_text(encoding="utf-8")))
-    reqs = dict(re.findall(r"^([a-z0-9-]+)==([0-9.]+)", (ROOT / "tests" / "requirements.txt").read_text(
-        encoding="utf-8"), re.MULTILINE))
-    assert "mcp" in reqs
-    for name, version in reqs.items():
-        if name in docker:
-            assert docker[name] == version, f"{name}: Dockerfile {docker[name]} != tests/requirements.txt {version}"
+# --- dependencies: pinned once, in kifli_mcp_connector/requirements.txt ---------------------------
+# A pin inside the Dockerfile is invisible to Dependabot: in #5 it bumped only the tests' copy of
+# mcp, which would have left the add-on itself on a version with open security advisories.
+
+def _requirements(path: Path) -> list[str]:
+    lines = (line.split("#", 1)[0].strip() for line in path.read_text(encoding="utf-8").splitlines())
+    return [line for line in lines if line]
+
+
+def test_add_on_requirements_pin_the_mcp_stack():
+    reqs = _requirements(ADDON / "requirements.txt")
+    assert any(re.fullmatch(r"mcp==[0-9.]+", r) for r in reqs)
+    assert any(re.fullmatch(r"mcp-proxy==[0-9.]+", r) for r in reqs)
+
+
+def test_dockerfile_installs_only_the_add_on_requirements():
+    dockerfile = (ADDON / "Dockerfile").read_text(encoding="utf-8")
+    assert re.search(r"^COPY requirements\.txt ", dockerfile, re.MULTILINE)
+    assert re.search(r"pip install .*-r /tmp/requirements\.txt", dockerfile)
+    assert not re.search(r'"[A-Za-z0-9_.-]+[=<>~]=', dockerfile), "pin Python packages in requirements.txt only"
+
+
+def test_tests_use_the_add_on_requirements():
+    reqs = _requirements(ROOT / "tests" / "requirements.txt")
+    assert "-r ../kifli_mcp_connector/requirements.txt" in reqs
+    add_on = {re.split(r"[=<>~!]", r, maxsplit=1)[0] for r in _requirements(ADDON / "requirements.txt")}
+    duplicated = [r for r in reqs if re.split(r"[=<>~!]", r, maxsplit=1)[0] in add_on]
+    assert not duplicated, f"pinned again in tests/requirements.txt: {duplicated}"
 
 
 def test_shim_reports_the_add_on_version():

@@ -42,6 +42,13 @@ fi
 export KIFLI_MCP_URL="${URL}"
 export KIFLI_PORT="${PORT}"
 export KIFLI_INGRESS_PORT="42784"
+# a felület / értesítések nyelve (hu → magyar eszközleírások)
+export KIFLI_LANG="${COUNTRY}"
+if bashio::config.true 'new_tools_enabled'; then
+  export KIFLI_NEW_TOOLS_ENABLED="true"
+else
+  export KIFLI_NEW_TOOLS_ENABLED="false"
+fi
 
 bashio::log.info "Starting Kifli MCP bridge on port ${PORT} (country=${COUNTRY}, url=${URL}) ..."
 bashio::log.info "Bejelentkezés / sign-in: nyisd meg a 'Kifli MCP' oldalt a Home Assistant oldalsávjában (ingress)."

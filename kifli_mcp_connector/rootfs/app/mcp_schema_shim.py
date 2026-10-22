@@ -17,9 +17,10 @@ from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
+from tool_settings import ToolSettings, notify_ha
 
 SERVER_NAME = "kifli-schema-shim"
-SERVER_VERSION = "2.0.0"
+SERVER_VERSION = "2.1.0"
 
 # Tool kihagyó rész, a HA / OpenAI schema-konverzió el tud hasalni rajtuk. v1.1 már kezeli.
 IGNORE_WORDS = {
@@ -386,6 +387,8 @@ async def main() -> None:
     sse_port = int(os.environ.get("KIFLI_PORT", "42783"))
     ingress_port = int(os.environ.get("KIFLI_INGRESS_PORT", "42784"))
 
+    new_tools_enabled = os.environ.get("KIFLI_NEW_TOOLS_ENABLED", "false").lower() == "true"
+    settings = ToolSettings(data_dir / "tool_settings.json", new_tools_enabled)
     auth = AuthManager(url, data_dir)
     upstream = Upstream(url, auth)
 
@@ -398,9 +401,14 @@ async def main() -> None:
         log.info("HA MCP integráció újratöltés: %s", note)
         return note
 
+    async def on_tools_saved() -> str:
+        note = await reload_ha_mcp_entry(sse_port)
+        log.info("Funkciólista mentve, HA MCP integráció újratöltés: %s", note)
+        return note
+
     web = uvicorn.Server(
         uvicorn.Config(
-            build_app(auth, sse_port, on_login_ok),
+            build_app(auth, sse_port, on_login_ok, settings, on_tools_saved),
             host="0.0.0.0",
             port=ingress_port,
             log_level="warning",
@@ -440,11 +448,19 @@ async def main() -> None:
             raise
         out: list[types.Tool] = []
 
+        # funkciólista nyilvántartása: új / megszűnt eszközök jelzése
+        new, removed = settings.sync({(t.name or ""): (getattr(t, "description", "") or "") for t in res.tools})
+        if new or removed:
+            asyncio.get_running_loop().create_task(notify_ha(new, removed, settings))
+
         for t in res.tools:
             name = t.name or ""
             name_l = name.lower()
 
             if any(w in name_l for w in IGNORE_WORDS):
+                continue
+
+            if not settings.is_enabled(name):
                 continue
 
             raw = getattr(t, "inputSchema", None) or getattr(t, "input_schema", None) or {}
@@ -476,6 +492,11 @@ async def main() -> None:
                 "A Kifli MCP nincs bejelentkezve. Nyisd meg a 'Kifli MCP' oldalt a Home Assistant "
                 "oldalsávjában, és jelentkezz be. / Not logged in to the Kifli MCP – open the "
                 "'Kifli MCP' panel in the Home Assistant sidebar and sign in."
+            )
+        if not settings.is_enabled(name):
+            raise RuntimeError(
+                f"A(z) '{name}' Kifli-funkció ki van kapcsolva (Kifli MCP oldal → Funkciók). / "
+                f"The Kifli tool '{name}' is disabled in the add-on."
             )
         args = dict(arguments or {})
         # Placeholder argot eldobjuk, mielőtt forwardolnánk a rohlik MCP felé.

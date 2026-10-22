@@ -2,6 +2,21 @@
 
 > 🇭🇺 **Magyarul a lap alján — [ugorj a magyar változatra](#magyar).**
 
+## 2.1.0 — 2026-10-22
+
+**New — turn individual tools on/off, and get notified when the tool list changes**
+
+- **Tools card on the Kifli MCP page:** every upstream tool with its description and a checkbox. Unchecked tools are removed from `tools/list` *and* refused in `tools/call`, so they cannot be called even by a client that talks to the SSE port directly. Saving reloads the Home Assistant MCP integration.
+- **New / removed tools are reported once:** a persistent notification plus the `kifli_mcp_new_tool` (`tool`, `description`, `enabled`) and `kifli_mcp_removed_tool` (`tool`) events, so an automation can forward them (Telegram, mobile push, …).
+- **New option `new_tools_enabled`** (default `false`): whether tools that appear upstream later start enabled. On the first start after the update every tool currently offered is enabled, so nothing disappears for existing installs.
+- State lives in `/data/tool_settings.json`.
+
+## 2.0.1 — 2026-10-22
+
+**Fixed — the add-on did not build on aarch64 (e.g. Home Assistant Green)**
+
+The Dockerfile defaulted `BUILD_FROM` to the amd64 base image and the add-on had no `build.yaml`, so the Supervisor (which only passes `BUILD_ARCH`) built on top of `amd64-base` and failed on ARM with `no match for platform in manifest`. The base image is now derived from `BUILD_ARCH` in the Dockerfile (no `build.yaml`, which the Supervisor now reports as deprecated).
+
 ## 2.0.0 — 2026-10-16
 
 **Breaking — sign-in is now OAuth; the `email` / `password` options are gone**
@@ -65,6 +80,21 @@ The upstream schemas were valid throughout — this is a workaround for a conver
 <a name="magyar"></a>
 
 # 🇭🇺 Változásnapló
+
+## 2.1.0 — 2026-10-22
+
+**Új — funkciónkénti ki/be kapcsolás, és értesítés, ha változik a funkciólista**
+
+- **Funkciók kártya a Kifli MCP oldalon:** minden upstream eszköz leírással és jelölőnégyzettel. A kikapcsolt eszköz kimarad a `tools/list`-ből, *és* a `tools/call` is elutasítja, így akkor sem hívható, ha valaki közvetlenül az SSE portra csatlakozik. Mentéskor a HA MCP-integráció újratöltődik.
+- **Az új / megszűnt eszközökről egyszer szól:** állandó értesítés, valamint `kifli_mcp_new_tool` (`tool`, `description`, `enabled`) és `kifli_mcp_removed_tool` (`tool`) esemény, amit automatizálás továbbíthat (Telegram, mobil értesítés stb.).
+- **Új `new_tools_enabled` opció** (alap: `false`): a később megjelenő eszközök bekapcsolva érkezzenek-e. A frissítés utáni első induláskor minden épp elérhető eszköz bekapcsolt, így a meglévő telepítéseknél semmi nem tűnik el.
+- Az állapot a `/data/tool_settings.json`-ban van.
+
+## 2.0.1 — 2026-10-22
+
+**Javítva — aarch64-en (pl. Home Assistant Green) nem épült le az add-on**
+
+A Dockerfile alapból az amd64 alapképet használta, `build.yaml` pedig nem volt, így a Supervisor (ami csak a `BUILD_ARCH`-ot adja át) ARM-on is az `amd64-base`-ből próbált építeni, és `no match for platform in manifest` hibával elhasalt. Az alapkép most a Dockerfile-ban a `BUILD_ARCH`-ból képződik (`build.yaml` nélkül, mert azt a Supervisor már elavultnak jelzi).
 
 ## 2.0.0 — 2026-10-16
 

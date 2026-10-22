@@ -1,5 +1,5 @@
-# A tesztek ugyanazzal az MCP SDK-val fussanak, mint az add-on: a kifli_mcp_connector/Dockerfile
-# pinjeivel egyezzen (a tests/test_addon_config.py ellenőrzi).
+# The tests must run on the same MCP SDK as the add-on: keep in sync with the pins in
+# kifli_mcp_connector/Dockerfile (checked by tests/test_addon_config.py).
 mcp==1.26.0
 python-multipart>=0.0.9
 

@@ -1,8 +1,8 @@
-"""A Kifli MCP oldal Funkciók kártyája (#3) – ahogy a böngésző használja.
+"""The Tools card on the Kifli MCP page (#3), as the browser uses it.
 
-A CodeRabbit #3-as megállapításai közül ez a fájl fogja meg, hogy a mentés
-sikeresnek jelezte a HA MCP integráció újratöltését akkor is, ha az elbukott,
-és – az oldalon át, végig – hogy az átmenetileg eltűnt eszköz mentéskor kikapcsolódott.
+Of the CodeRabbit findings on #3, this file catches that a save reported the
+HA MCP integration reload as successful even when it failed, and – end to end
+through the page – that a temporarily missing tool got disabled on save.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ async def _login_ok() -> str:
 
 
 class Reload:
-    """Hamis on_tools_saved: a HA MCP integráció újratöltésének eredménye."""
+    """Fake on_tools_saved: the result of reloading the HA MCP integration."""
 
     def __init__(self, ok: bool) -> None:
         self.ok = ok
@@ -58,11 +58,11 @@ def _save(settings, reload, tools, rev=None):
 
 def _toast(resp: httpx.Response) -> tuple[str, str]:
     m = re.search(r'<div class="toast ([a-z]+)">([^<]*)</div>', resp.text)
-    assert m, "nincs visszajelzés (toast) az oldalon"
+    assert m, "no feedback (toast) on the page"
     return m.group(1), m.group(2)
 
 
-# --- mentés és a HA MCP integráció újratöltése ---------------------------------------------------
+# --- saving and reloading the HA MCP integration -------------------------------------------------
 
 def test_save_with_successful_reload(settings):
     reload = Reload(ok=True)
@@ -80,14 +80,14 @@ def test_failed_reload_is_a_warning_not_a_success(settings):
     assert cls == "warn"
     assert "nem sikerült" in text
     assert "újratöltve" not in text
-    # a mentés ettől még megtörtént
+    # the save itself still happened
     assert settings.is_enabled("get_cart") is False
 
 
 def test_stale_page_is_rejected_and_changes_nothing(settings):
     reload = Reload(ok=True)
     old_rev = settings.rev
-    settings.set_enabled(set(UPSTREAM))  # közben egy másik fülön mentettek
+    settings.set_enabled(set(UPSTREAM))  # meanwhile someone saved from another tab
     resp = _save(settings, reload, set(), rev=old_rev)
     cls, text = _toast(resp)
     assert cls == "err"
@@ -111,7 +111,7 @@ def test_json_save_with_wrong_shape_changes_nothing(settings):
     assert reload.calls == 0
 
 
-# --- megjelenítés -------------------------------------------------------------------------------
+# --- rendering -----------------------------------------------------------------------------------
 
 def test_tools_card_lists_tools_and_escapes_upstream_text(settings):
     settings.sync({**UPSTREAM, "evil<b>tool</b>": '<img src=x onerror="alert(1)">'})
@@ -124,15 +124,15 @@ def test_tools_card_lists_tools_and_escapes_upstream_text(settings):
 
 
 def test_missing_tool_keeps_its_selection_when_saved_from_the_page(settings):
-    settings.sync({k: v for k, v in UPSTREAM.items() if k != "get_cart"})  # get_cart átmenetileg eltűnik
+    settings.sync({k: v for k, v in UPSTREAM.items() if k != "get_cart"})  # get_cart is gone for a while
     page = _call(settings, Reload(ok=True), "GET", "/").text
     checkbox = re.search(r'<input type="checkbox" name="tool" value="get_cart"[^>]*>', page).group(0)
-    assert "disabled" in checkbox  # a böngésző a letiltott mezőt nem küldi el
+    assert "disabled" in checkbox  # the browser does not submit a disabled field
 
-    # amit a böngésző ténylegesen elküld: a bepipált, nem letiltott mezők
+    # what the browser actually submits: the checked fields that are not disabled
     submitted = set(re.findall(r'<input type="checkbox" name="tool" value="([^"]+)" checked>', page))
     assert "get_cart" not in submitted
     _save(settings, Reload(ok=True), submitted)
 
-    settings.sync(UPSTREAM)  # visszajön
+    settings.sync(UPSTREAM)  # it comes back
     assert settings.is_enabled("get_cart") is True

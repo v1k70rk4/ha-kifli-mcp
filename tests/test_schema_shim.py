@@ -1,4 +1,4 @@
-"""A schema shim normalizálása: amit a Home Assistant és az LLM API-k elfogadnak."""
+"""Schema shim normalization: what Home Assistant and the LLM APIs accept."""
 
 from __future__ import annotations
 
@@ -8,9 +8,16 @@ import pytest
 from jsonschema import Draft202012Validator
 from mcp_schema_shim import PLACEHOLDER_ARG, simplify_schema
 
+# Known gaps (CodeRabbit on #4): the expected outputs below are correct, the shim does not produce
+# them yet. strict=True makes these tests fail once the shim is fixed, so the marker gets removed.
+KNOWN_GAP = pytest.mark.xfail(
+    strict=True,
+    reason="known gap: the shim loosens this constraint – fix pending (runtime change, needs a version bump)",
+)
+
 
 def _walk(node):
-    """A séma összes dict csomópontja, rekurzívan."""
+    """Every dict node of the schema, recursively."""
     if isinstance(node, dict):
         yield node
         for v in node.values():
@@ -24,8 +31,8 @@ def _obj(**props):
     return {"type": "object", "properties": props}
 
 
-# --- 1.2.1: a HA 2026.9 (probatio) a numerikus exclusive* határt draft-04 boolean-ra írta át,
-# és az Anthropic API emiatt az EGÉSZ tool-listát elutasította --------------------------------
+# --- 1.2.1: Home Assistant 2026.9 (probatio) rewrote numeric exclusive* bounds into the draft-04
+# boolean form, and the Anthropic API then rejected the ENTIRE tool list ---------------------------
 
 def test_integer_exclusive_bounds_become_inclusive():
     out = simplify_schema(_obj(qty={"type": "integer", "exclusiveMinimum": 0, "exclusiveMaximum": 10}))
@@ -46,13 +53,20 @@ def test_exclusive_bound_never_loosens_an_existing_bound():
     assert out["properties"]["hi"]["maximum"] == 3
 
 
-def test_draft04_boolean_exclusive_is_dropped():
+def test_draft04_boolean_exclusive_keyword_is_removed():
     out = simplify_schema(_obj(n={"type": "integer", "minimum": 0, "exclusiveMinimum": True}))
-    assert out["properties"]["n"] == {"type": "integer", "minimum": 0}
+    assert "exclusiveMinimum" not in out["properties"]["n"]
+
+
+@KNOWN_GAP
+def test_draft04_exclusive_integer_minimum_stays_strict():
+    # draft-04: minimum 0 + exclusiveMinimum true rejects 0, so for integers the bound is 1
+    out = simplify_schema(_obj(n={"type": "integer", "minimum": 0, "exclusiveMinimum": True}))
+    assert out["properties"]["n"] == {"type": "integer", "minimum": 1}
 
 
 def test_no_exclusive_keyword_survives_anywhere():
-    # a három érintett upstream tool (pl. add_products_to_shopping_list) mintájára: beágyazva, $ref mögött is
+    # modelled on the three affected upstream tools (e.g. add_products_to_shopping_list): nested and behind a $ref
     schema = {
         "type": "object",
         "properties": {
@@ -78,20 +92,20 @@ def test_no_exclusive_keyword_survives_anywhere():
     assert item["amount"] == {"type": "integer", "minimum": 1, "maximum": 999}
 
 
-# --- $ref, unionok -------------------------------------------------------------------------------
+# --- $ref, unions --------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("defs_key", ["$defs", "definitions"])
 def test_local_refs_are_inlined_and_dollar_keys_removed(defs_key):
     schema = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
-        "properties": {"item": {"$ref": f"#/{defs_key}/Item", "description": "A tétel"}},
+        "properties": {"item": {"$ref": f"#/{defs_key}/Item", "description": "The item"}},
         defs_key: {"Item": {"type": "object", "properties": {"id": {"type": "integer"}}}},
     }
     out = simplify_schema(schema)
     item = out["properties"]["item"]
     assert item["properties"]["id"] == {"type": "integer"}
-    assert item["description"] == "A tétel"  # a $ref melletti kulcsok megmaradnak
+    assert item["description"] == "The item"  # keys next to the $ref are kept
     assert defs_key not in out
     assert not any(k.startswith("$") for node in _walk(out) for k in node)
 
@@ -110,19 +124,27 @@ def test_recursive_ref_terminates():
 @pytest.mark.parametrize("union", ["anyOf", "oneOf"])
 def test_nullable_union_picks_the_real_type(union):
     out = simplify_schema(_obj(note={union: [{"type": "null"}, {"type": "string"}], "default": None,
-                                     "description": "Megjegyzés"}))
-    assert out["properties"]["note"] == {"type": "string", "description": "Megjegyzés"}
+                                     "description": "A note"}))
+    assert out["properties"]["note"] == {"type": "string", "description": "A note"}
 
 
-def test_allof_takes_the_first_part_and_keeps_the_title():
+def test_allof_keeps_the_type_and_the_title():
     out = simplify_schema(_obj(n={"allOf": [{"type": "integer"}, {"minimum": 1}], "title": "N"}))
-    assert out["properties"]["n"] == {"type": "integer", "title": "N"}
+    assert out["properties"]["n"]["type"] == "integer"
+    assert out["properties"]["n"]["title"] == "N"
 
 
-# --- típusok, nem támogatott kulcsok ------------------------------------------------------------
+@KNOWN_GAP
+def test_allof_keeps_constraints_from_every_branch():
+    # the input requires an integer of at least 1; dropping the second branch would allow 0
+    out = simplify_schema(_obj(n={"allOf": [{"type": "integer"}, {"minimum": 1}], "title": "N"}))
+    assert out["properties"]["n"] == {"type": "integer", "minimum": 1, "title": "N"}
+
+
+# --- types, unsupported keywords -----------------------------------------------------------------
 
 def test_properties_named_like_keywords_are_not_treated_as_keywords():
-    # a 'properties' alatti dict mapping, nem séma: az 'items' / 'type' nevű mező nem kulcsszó
+    # the dict under 'properties' is a mapping, not a schema: fields named 'items' / 'type' are not keywords
     out = simplify_schema(_obj(items={"type": "array", "items": {"type": "integer"}}, type={"type": "string"}))
     assert out["properties"]["items"] == {"type": "array", "items": {"type": "integer"}}
     assert out["properties"]["type"] == {"type": "string"}
@@ -147,7 +169,7 @@ def test_unsupported_keywords_and_null_defaults_are_removed():
     assert "default" not in out["properties"]["name"]
 
 
-# --- gyökér: a HA / OpenAI function paraméterként objektumot vár, nem üres properties-szel -------
+# --- root: HA / OpenAI expect an object as function parameters, without empty properties ---------
 
 @pytest.mark.parametrize("schema", [None, {}, {"type": "object"}, {"type": "string"}, {"type": "array"}])
 def test_root_is_always_an_object_with_the_placeholder(schema):

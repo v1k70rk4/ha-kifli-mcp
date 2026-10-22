@@ -7,9 +7,9 @@ on:
 
 jobs:
   build:
-    # Úgy buildelünk, ahogy a Supervisor: csak BUILD_ARCH-ot adunk át (BUILD_FROM-ot nem),
-    # mindkét architektúrán natív runneren – így a Dockerfile architektúra szerinti
-    # alapképe is tesztelve van (2.0.0-ban ez aarch64-en elbukott, lásd #1).
+    # Build the way the Supervisor does: pass only BUILD_ARCH (no BUILD_FROM), on a native
+    # runner for each architecture, so the Dockerfile's per-architecture base image is
+    # tested too (in 2.0.0 this failed on aarch64, see #1).
     name: "build (${{ matrix.arch }})"
     strategy:
       fail-fast: false

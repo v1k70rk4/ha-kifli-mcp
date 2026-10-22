@@ -1,4 +1,4 @@
-"""A bejelentkező (ingress) oldal, a bemásolt OAuth-visszahívás és a tokentárolás."""
+"""The sign-in (ingress) page, the pasted OAuth callback and the token storage."""
 
 from __future__ import annotations
 
@@ -12,7 +12,8 @@ from kifli_auth import AuthManager, FileTokenStorage, build_app
 from mcp.shared.auth import OAuthToken
 
 MCP_URL = "https://mcp.kifli.hu/mcp"
-AUTH_URL = "https://identity.kifli.hu/realms/kifli/protocol/openid-connect/auth?client_id=x"
+# contains '&' so the escaping of the login link is actually checked
+AUTH_URL = "https://identity.kifli.hu/realms/kifli/protocol/openid-connect/auth?client_id=x&scope=openid"
 CALLBACK = "http://localhost:3334/oauth/callback?code=abc&state=xyz"
 
 
@@ -30,7 +31,7 @@ def _client(auth: AuthManager) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://ingress")
 
 
-# --- a bemásolt átirányítási cím ----------------------------------------------------------------
+# --- the pasted redirect URL ---------------------------------------------------------------------
 
 @pytest.mark.parametrize(("pasted", "expected"), [
     ("", "Üres mező"),
@@ -57,7 +58,7 @@ def test_callback_url_delivers_code_and_state(auth, pasted):
         assert auth.status == "waiting_code"
         assert auth.submit_callback_url(pasted) is None
         code_state = await auth._wait_for_code()
-        # ugyanaz a cím másodszor már nem fogadható el
+        # the same URL cannot be used a second time
         return code_state, auth.status, auth.submit_callback_url(pasted)
 
     code_state, status, second = asyncio.run(scenario())
@@ -66,7 +67,7 @@ def test_callback_url_delivers_code_and_state(auth, pasted):
     assert "nincs folyamatban" in second
 
 
-# --- az ingress oldal ---------------------------------------------------------------------------
+# --- the ingress page ----------------------------------------------------------------------------
 
 def test_start_page_and_status_before_login(auth):
     async def scenario():
@@ -81,7 +82,7 @@ def test_start_page_and_status_before_login(auth):
 
 def test_full_login_via_pasted_url(auth):
     async def fake_sdk():
-        # amit az SDK tesz: megvárja a kódot, kicseréli tokenre, kész
+        # what the SDK does: wait for the code, exchange it for a token, done
         await auth._wait_for_code()
         auth.status = "ok"
         auth.logged_in.set()
@@ -92,11 +93,13 @@ def test_full_login_via_pasted_url(auth):
         async with _client(auth) as c:
             waiting = await c.get("/")
             done = await c.post("/callback", data={"url": CALLBACK})
-        await sdk
+        # bounded: if /callback rejected the URL, the fake SDK would wait forever
+        await asyncio.wait_for(sdk, timeout=5)
         return waiting, done
 
     waiting, done = asyncio.run(scenario())
-    assert AUTH_URL.replace("&", "&amp;") in waiting.text  # a bejelentkező link escape-elve
+    assert AUTH_URL.replace("&", "&amp;") in waiting.text  # the login link is HTML-escaped
+    assert AUTH_URL not in waiting.text
     assert done.status_code == 200
     assert "Siker!" in done.text
     assert "MCP :42783 → 200" in done.text
@@ -131,7 +134,7 @@ def test_logout_clears_tokens(auth):
     assert not auth.logged_in.is_set()
 
 
-# --- tokentárolás -------------------------------------------------------------------------------
+# --- token storage -------------------------------------------------------------------------------
 
 def test_token_storage_roundtrip_and_clear(tmp_path):
     storage = FileTokenStorage(tmp_path / "oauth")
@@ -145,16 +148,16 @@ def test_token_storage_roundtrip_and_clear(tmp_path):
     assert (tokens.access_token, tokens.refresh_token) == ("a", "r")
     storage.clear()
     assert not storage.has_tokens()
-    storage.clear()  # a hiányzó fájl sem hiba
+    storage.clear()  # a missing file is not an error either
 
 
 def test_corrupt_token_file_reads_as_logged_out(tmp_path):
     storage = FileTokenStorage(tmp_path / "oauth")
-    (tmp_path / "oauth" / "tokens.json").write_text("{nem json", encoding="utf-8")
+    (tmp_path / "oauth" / "tokens.json").write_text("{not json", encoding="utf-8")
     assert asyncio.run(storage.get_tokens()) is None
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX jogosultság")
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions")
 def test_token_file_is_private(tmp_path):
     storage = FileTokenStorage(tmp_path / "oauth")
     asyncio.run(storage.set_tokens(OAuthToken(access_token="a", token_type="Bearer")))

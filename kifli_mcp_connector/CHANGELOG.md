@@ -13,7 +13,7 @@ So a voice assistant can, for example, search, fill the cart and read orders, bu
 - **Nothing disappears on update:** on the first start every tool currently offered is enabled.
 - **New or removed upstream tools are reported once:** a persistent notification, plus the `kifli_mcp_new_tool` / `kifli_mcp_removed_tool` events for automations. New tools start **disabled** unless the new `new_tools_enabled` option is on.
 - A tool that disappears upstream for a while keeps its on/off setting when it comes back.
-- If the settings file (`/data/tool_settings.json`) is ever corrupted, the tools come in disabled with a notification instead of all being switched on; the broken file is kept as `tool_settings.corrupt`.
+- If the settings file (`/data/tool_settings.json`) is ever corrupted, every tool is treated as new instead of all being switched on: with the default `new_tools_enabled: false` they come in disabled, with a notification. The broken file is kept as `tool_settings.corrupt`.
 - Tool descriptions on the page are shown in Hungarian when `country` is `hu` (the model still gets the upstream text).
 - Docs: the SSE port has no authentication of its own – the *Networking & security* section explains how to keep it internal.
 
@@ -109,7 +109,7 @@ The upstream schemas were valid throughout — this is a workaround for a conver
 - **Frissítéskor semmi nem tűnik el:** az első induláskor minden épp elérhető funkció bekapcsolt.
 - **Új vagy megszűnt upstream funkcióról egyszer szól:** állandó értesítés, valamint `kifli_mcp_new_tool` / `kifli_mcp_removed_tool` esemény automatizáláshoz. Az új funkció **kikapcsolva** érkezik, hacsak az új `new_tools_enabled` opció nincs bekapcsolva.
 - Ha egy funkció egy időre eltűnik az upstreamről, visszatéréskor megtartja a ki/be állapotát.
-- Ha a beállításfájl (`/data/tool_settings.json`) valaha megsérülne, a funkciók kikapcsolva érkeznek, értesítéssel, nem kapcsol be minden; a hibás fájl `tool_settings.corrupt` néven megmarad.
+- Ha a beállításfájl (`/data/tool_settings.json`) valaha megsérülne, nem kapcsol be minden, hanem minden funkciót újnak tekint: az alapértelmezett `new_tools_enabled: false` mellett kikapcsolva érkeznek, értesítéssel. A hibás fájl `tool_settings.corrupt` néven megmarad.
 - `country: hu` esetén az oldalon magyar eszközleírások látszanak (a modell továbbra is az eredeti leírást kapja).
 - Dokumentáció: az SSE portnak nincs saját hitelesítése – a *Hálózat és biztonság* rész leírja, hogyan tartható belső használatban.
 

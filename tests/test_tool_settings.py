@@ -1,8 +1,8 @@
-"""Eszközönkénti ki/be kapcsolás és az eszközlista változásának jelzése (#3).
+"""Per-tool on/off switches and tool-list change notifications (#3).
 
-A CodeRabbit #3-as megállapításai közül ez a fájl fogja meg: a sérült
-beállításfájlnál mindent bekapcsoló hibát, az átmenetileg eltűnt eszköz
-kikapcsolódását mentéskor, és a HTTP-hibát sikerként naplózó értesítést.
+Of the CodeRabbit findings on #3, this file catches: a corrupt settings file
+enabling every tool, a temporarily missing tool being disabled on save, and
+HTTP errors in the notification being logged as success.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def _enabled(settings, names=UPSTREAM):
     return {n: settings.is_enabled(n) for n in names}
 
 
-# --- első indulás, frissítés --------------------------------------------------------------------
+# --- first start, update -------------------------------------------------------------------------
 
 def test_first_start_enables_everything_and_reports_nothing(path):
     settings = ToolSettings(path, new_tools_enabled=False)
@@ -49,7 +49,7 @@ def test_selection_and_revision_survive_a_restart(path):
     assert again.rev == rev
 
 
-# --- új és megszűnt eszközök --------------------------------------------------------------------
+# --- new and removed tools -----------------------------------------------------------------------
 
 @pytest.mark.parametrize("new_tools_enabled", [False, True])
 def test_new_tool_follows_the_option_and_is_reported_once(path, new_tools_enabled):
@@ -71,7 +71,7 @@ def test_removed_tool_is_reported_once_and_marked_missing(path):
 
 
 def test_unknown_tool_follows_the_option(path):
-    # hívás a lista előtt (pl. újraindítás után): az opció dönt
+    # a call before the first listing (e.g. after a restart): the option decides
     assert ToolSettings(path, new_tools_enabled=False).is_enabled("never_seen") is False
     assert ToolSettings(path, new_tools_enabled=True).is_enabled("never_seen") is True
 
@@ -80,28 +80,28 @@ def test_saving_keeps_the_selection_of_a_temporarily_missing_tool(path):
     settings = ToolSettings(path, new_tools_enabled=False)
     settings.sync(UPSTREAM)
     settings.sync({k: v for k, v in UPSTREAM.items() if k != "get_cart"})
-    # a lapon a megszűnt eszköz jelölőnégyzete le van tiltva, a böngésző nem küldi el
+    # on the page the missing tool's checkbox is disabled, so the browser does not submit it
     submitted = {n for n, e in settings.listing() if e.get("enabled") and not e.get("missing")}
     settings.set_enabled(submitted)
     settings.sync(UPSTREAM)
     assert settings.is_enabled("get_cart") is True
 
 
-# --- sérült beállításfájl: biztonságos irányba bukik ---------------------------------------------
+# --- corrupt settings file: fail closed ----------------------------------------------------------
 
-@pytest.mark.parametrize("content", ["{nem json", "[]", '{"tools": {}, "rev": "x"}', '{"tools": ["x"]}'])
+@pytest.mark.parametrize("content", ["{not json", "[]", '{"tools": {}, "rev": "x"}', '{"tools": ["x"]}'])
 def test_corrupt_file_fails_closed(path, content):
     path.write_text(content, encoding="utf-8")
     settings = ToolSettings(path, new_tools_enabled=False)
     new, removed = settings.sync(UPSTREAM)
-    assert not any(_enabled(settings).values())  # NEM kapcsol be mindent, mint első induláskor
-    assert sorted(new) == sorted(UPSTREAM)  # értesítés megy róla
+    assert not any(_enabled(settings).values())  # NOT everything on, unlike a first start
+    assert sorted(new) == sorted(UPSTREAM)  # and a notification goes out
     assert removed == []
-    assert path.with_suffix(".corrupt").read_text(encoding="utf-8") == content  # a hibás fájl megmarad
-    json.loads(path.read_text(encoding="utf-8"))  # az új fájl már érvényes
+    assert path.with_suffix(".corrupt").read_text(encoding="utf-8") == content  # the broken file is kept
+    json.loads(path.read_text(encoding="utf-8"))  # the new file is valid again
 
 
-# --- megjelenítés -------------------------------------------------------------------------------
+# --- display -------------------------------------------------------------------------------------
 
 def test_hungarian_descriptions_only_for_hu(path, monkeypatch):
     monkeypatch.setenv("KIFLI_LANG", "hu")
@@ -114,10 +114,10 @@ def test_hungarian_descriptions_only_for_hu(path, monkeypatch):
     assert dict(cz.listing())["get_cart"]["description"] == "Cart"
 
 
-# --- értesítés a Home Assistantnak --------------------------------------------------------------
+# --- Home Assistant notification -----------------------------------------------------------------
 
 def _mock_ha(monkeypatch, status_for):
-    """A tool_settings httpx kliensét egy hamis Supervisor API-ra irányítja; visszaadja a kérések útvonalát."""
+    """Point tool_settings' httpx client at a fake Supervisor API; returns the request paths."""
     seen: list[str] = []
     real = httpx.AsyncClient
 
@@ -152,9 +152,9 @@ def test_notify_reports_http_errors_and_keeps_going(path, monkeypatch, caplog):
     settings.sync(UPSTREAM)
     with caplog.at_level(logging.INFO, logger="kifli.tools"):
         asyncio.run(notify_ha(["reserve_timeslot"], [], settings))
-    assert len(seen) == 2  # az értesítés hibája után az esemény is elment
+    assert len(seen) == 2  # the event was still sent after the notification failed
     assert any(r.levelno == logging.WARNING for r in caplog.records)
-    assert not any("jelezve" in r.getMessage() for r in caplog.records)  # nincs hamis "siker"
+    assert not any("jelezve" in r.getMessage() for r in caplog.records)  # no false "notified" log
 
 
 def test_notify_without_supervisor_token_does_nothing(path, monkeypatch):

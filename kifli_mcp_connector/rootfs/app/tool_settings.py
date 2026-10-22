@@ -61,12 +61,33 @@ class ToolSettings:
     # --- tárolás ---------------------------------------------------------------
     def _load(self) -> None:
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            raw = self.path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return  # valódi első indulás: a sync mindent bekapcsol
+        except OSError as ex:
+            self._load_failed(f"nem olvasható ({ex})")
             return
-        self.tools = {k: v for k, v in (data.get("tools") or {}).items() if isinstance(v, dict)}
-        self.removed = [str(x) for x in data.get("removed") or []]
-        self.rev = int(data.get("rev") or 0)
+        try:
+            data = json.loads(raw)
+            self.tools = {k: v for k, v in (data.get("tools") or {}).items() if isinstance(v, dict)}
+            self.removed = [str(x) for x in data.get("removed") or []]
+            self.rev = int(data.get("rev") or 0)
+        except (ValueError, TypeError, AttributeError) as ex:
+            self.tools, self.removed, self.rev = {}, [], 0
+            self._load_failed(f"hibás tartalmú ({ex})")
+            return
+        self.initialized = True
+
+    def _load_failed(self, reason: str) -> None:
+        """Létező, de olvashatatlan beállításfájl – ez NEM első indulás, tehát nem
+        kapcsolunk be mindent (a felhasználó kikapcsolt eszközei is bekapcsolnának).
+        Biztonságos irányba bukunk: minden eszköz újként, a ``new_tools_enabled``
+        szerint (alapból kikapcsolva) érkezik, és értesítés megy róla. A hibás
+        fájlt félretesszük, hogy ne íródjon felül nyom nélkül."""
+        log.error("A %s %s – az eszközök a 'new_tools_enabled' szerint indulnak, a fájl .corrupt néven félretéve.",
+                  self.path, reason)
+        with contextlib.suppress(OSError):
+            self.path.replace(self.path.with_suffix(".corrupt"))
         self.initialized = True
 
     def _save(self) -> None:
@@ -132,6 +153,10 @@ class ToolSettings:
 
     def set_enabled(self, enabled_names: set[str]) -> None:
         for name, entry in self.tools.items():
+            if entry.get("missing"):
+                # a lapon le van tiltva, a böngésző nem küldi – ne kapcsoljuk ki emiatt,
+                # hogy ha visszajön, a korábbi állapotában jöjjön vissza
+                continue
             entry["enabled"] = name in enabled_names
             entry.pop("is_new", None)
         self._save()
@@ -159,22 +184,31 @@ async def notify_ha(new: list[str], removed: list[str], settings: ToolSettings) 
         lines.extend(f"- `{n}`" for n in removed)
     lines.append("")
     lines.append("Ki/bekapcsolás: oldalsáv → **Kifli MCP** → Funkciók.")
+    calls: list[tuple[str, dict, str]] = [(
+        "services/persistent_notification/create",
+        {"title": "Kifli MCP – változott a funkciólista",
+         "message": "\n".join(lines), "notification_id": NOTIFICATION_ID},
+        "értesítés",
+    )]
+    calls += [(f"events/{EVENT_NEW}", {
+        "tool": n,
+        "description": _short(settings.display_description(n), 500),
+        "enabled": settings.is_enabled(n),
+    }, f"{EVENT_NEW} {n}") for n in new]
+    calls += [(f"events/{EVENT_REMOVED}", {"tool": n}, f"{EVENT_REMOVED} {n}") for n in removed]
+    failed: list[str] = []
     try:
         async with httpx.AsyncClient(timeout=20) as c:
-            await c.post(
-                f"{base}/services/persistent_notification/create",
-                headers=h,
-                json={"title": "Kifli MCP – változott a funkciólista",
-                      "message": "\n".join(lines), "notification_id": NOTIFICATION_ID},
-            )
-            for n in new:
-                await c.post(f"{base}/events/{EVENT_NEW}", headers=h, json={
-                    "tool": n,
-                    "description": _short(settings.display_description(n), 500),
-                    "enabled": settings.is_enabled(n),
-                })
-            for n in removed:
-                await c.post(f"{base}/events/{EVENT_REMOVED}", headers=h, json={"tool": n})
-        log.info("Eszközváltozás jelezve a HA-nak: új=%s, megszűnt=%s", new, removed)
+            # egy hibás hívás ne vigye el a többit; a HTTP-hibát is hibának vesszük
+            for path, payload, what in calls:
+                try:
+                    r = await c.post(f"{base}/{path}", headers=h, json=payload)
+                    r.raise_for_status()
+                except httpx.HTTPError as ex:
+                    failed.append(f"{what} ({ex})")
     except Exception as ex:  # noqa: BLE001 – kényelmi funkció, ne döntse be a shimet
-        log.warning("Eszközváltozás jelzése nem sikerült: %s", ex)
+        failed.append(f"kapcsolat ({ex})")
+    if failed:
+        log.warning("Eszközváltozás jelzése a HA-nak nem (teljesen) sikerült: %s", "; ".join(failed))
+    else:
+        log.info("Eszközváltozás jelezve a HA-nak: új=%s, megszűnt=%s", new, removed)

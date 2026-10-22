@@ -11,7 +11,13 @@ from typing import Any
 import anyio
 import mcp.server.stdio
 import uvicorn
-from kifli_auth import AuthManager, build_app, reload_ha_mcp_entry, setup_logging
+from kifli_auth import (
+    AuthManager,
+    build_app,
+    reload_ha_mcp_entry,
+    reload_ha_mcp_entry_result,
+    setup_logging,
+)
 from mcp import types
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
@@ -401,10 +407,13 @@ async def main() -> None:
         log.info("HA MCP integráció újratöltés: %s", note)
         return note
 
-    async def on_tools_saved() -> str:
-        note = await reload_ha_mcp_entry(sse_port)
-        log.info("Funkciólista mentve, HA MCP integráció újratöltés: %s", note)
-        return note
+    async def on_tools_saved() -> tuple[bool, str]:
+        ok, note = await reload_ha_mcp_entry_result(sse_port)
+        if ok:
+            log.info("Funkciólista mentve, HA MCP integráció újratöltve: %s", note)
+        else:
+            log.warning("Funkciólista mentve, de a HA MCP integráció újratöltése nem sikerült: %s", note)
+        return ok, note
 
     web = uvicorn.Server(
         uvicorn.Config(

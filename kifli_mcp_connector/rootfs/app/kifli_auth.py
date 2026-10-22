@@ -215,9 +215,15 @@ async def reload_ha_mcp_entry(local_port: int) -> str:
     """A Supervisor proxyn át megkeressük a HA `mcp` config entry-t, ami erre az
     add-onra mutat, és újratöltjük – így a toolok azonnal megjelennek, nem 30 perc
     múlva. Ehhez a config.yaml-ban `homeassistant_api: true` kell."""
+    return (await reload_ha_mcp_entry_result(local_port))[1]
+
+
+async def reload_ha_mcp_entry_result(local_port: int) -> tuple[bool, str]:
+    """Mint a reload_ha_mcp_entry, de azt is visszaadja, sikerült-e: csak akkor
+    igaz, ha találtunk entry-t, és mindegyik újratöltése 2xx választ adott."""
     token = os.environ.get("SUPERVISOR_TOKEN")
     if not token:
-        return "nincs SUPERVISOR_TOKEN"
+        return False, "nincs SUPERVISOR_TOKEN"
     base = "http://supervisor/core/api"
     h = {"Authorization": f"Bearer {token}"}
     try:
@@ -226,15 +232,19 @@ async def reload_ha_mcp_entry(local_port: int) -> str:
             r.raise_for_status()
             entries = r.json()
             done = []
+            ok = True
             for e in entries:
                 title = str(e.get("title", ""))
                 # a HA az URL-ből képez címet; a mi portunk benne van, vagy csak egy MCP entry van
                 if f":{local_port}" in title or len(entries) == 1:
                     rr = await c.post(f"{base}/config/config_entries/entry/{e['entry_id']}/reload", headers=h)
                     done.append(f"{title} → {rr.status_code}")
-            return "; ".join(done) if done else "nem találtam ide mutató MCP entry-t"
+                    ok = ok and rr.is_success
+            if not done:
+                return False, "nem találtam ide mutató MCP entry-t"
+            return ok, "; ".join(done)
     except Exception as ex:  # noqa: BLE001 – csak kényelmi funkció, soha ne döntse be a shimet
-        return f"hiba: {ex}"
+        return False, f"hiba: {ex}"
 
 
 # --- Ingress oldal -------------------------------------------------------------
@@ -254,7 +264,7 @@ PAGE = """<!doctype html><html lang="hu"><head><meta charset="utf-8">
  td.n{{white-space:nowrap}} .new{{background:#fff3e0;color:#e65100;border-radius:4px;padding:0 .3rem;font-size:.8rem}}
  .gone{{color:#999;text-decoration:line-through}}
  .toast{{position:fixed;left:50%;bottom:1.2rem;transform:translateX(-50%);background:#2e7d32;color:#fff;padding:.7rem 1.2rem;border-radius:10px;box-shadow:0 2px 8px #0004;max-width:90%;animation:fade 6s forwards}}
- .toast.err{{background:#c62828}} @keyframes fade{{0%,80%{{opacity:1}}100%{{opacity:0;visibility:hidden}}}}
+ .toast.err{{background:#c62828}} .toast.warn{{background:#e65100}} @keyframes fade{{0%,80%{{opacity:1}}100%{{opacity:0;visibility:hidden}}}}
 </style></head><body>
 <h1>🛒 Kifli / Rohlik MCP</h1>
 <div class="card"><b>Állapot / Status:</b> {status_html}{error_html}</div>
@@ -394,8 +404,18 @@ def build_app(auth: AuthManager, port: int, on_login_ok, settings=None, on_tools
                     "This page is out of date – reload it and save again."
                 )
             settings.set_enabled({str(v) for v in form.getlist("tool")})
-        note = await on_tools_saved() if on_tools_saved else ""
-        return render(f"Mentve. HA MCP integráció újratöltve: {note}", "ok")
+        if on_tools_saved is None:
+            return render("Mentve. / Saved.", "ok")
+        ok, note = await on_tools_saved()
+        if ok:
+            return render(f"Mentve, a HA MCP integráció újratöltve ({note}). / Saved, integration reloaded.", "ok")
+        # a mentés megvan, de a HA még a régi eszközlistát látja, amíg nem töltődik újra
+        return render(
+            f"Mentve, de a HA MCP integrációt nem sikerült újratölteni ({note}) – töltsd újra kézzel: "
+            "Beállítások → Eszközök és szolgáltatások → MCP. / "
+            "Saved, but reloading the MCP integration failed – reload it manually.",
+            "warn",
+        )
 
     async def logout(_: Request):
         await auth.logout()

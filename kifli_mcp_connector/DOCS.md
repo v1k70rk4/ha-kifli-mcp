@@ -13,6 +13,7 @@ This add-on exposes the Rohlik Group MCP tools (Kifli.hu, Rohlik.cz, Gurkerl.at,
 - A **Kifli MCP** page in the Home Assistant sidebar (ingress) to sign in – no credentials stored in the add-on
 - `mcp-proxy` SSE server towards Home Assistant
 - `mcp_schema_shim.py`: schema normalization (refs, unions, unsupported keys, empty-object-properties fix, draft-04 exclusive bounds)
+- **Per-tool on/off switches** on the Kifli MCP page, and a notification when the upstream tool list changes (see *Tools*)
 
 ## How it works
 ```
@@ -54,6 +55,7 @@ Until you sign in the add-on serves an **empty tool list** (instead of timing ou
 | `port` | int | `42783` | SSE server port |
 | `country` | list | `hu` | Rohlik Group country: `hu`, `cz`, `at`, `de`, `ro` (see below) |
 | `mcp_url` | string | `""` | (Optional) Custom MCP endpoint; overrides the `country`-based URL |
+| `new_tools_enabled` | bool | `false` | Whether tools that appear upstream **later** start enabled (see *Tools*) |
 | `email`, `password` | – | – | **Deprecated since 2.0**, ignored. Left in the schema only so old configurations still validate – you can delete them. |
 
 ### Example
@@ -109,8 +111,23 @@ If the user is not talking about the shop, do not use the MCP.
 Strip image links from the answers — the system cannot display them.
 ```
 
+## Tools (turning features on/off)
+The **Tools** card on the Kifli MCP page lists every tool the Rohlik Group MCP offers, with a checkbox each (descriptions are shown in Hungarian when `country` is `hu`).
+
+- Only checked tools are passed to Home Assistant. Unchecked tools are also **refused in `tools/call`**, so they cannot be used even by a client that connects to the SSE port directly.
+- Saving reloads the Home Assistant MCP integration, so the change is live within seconds.
+- On the first start after updating, every tool currently offered is enabled — nothing disappears for existing installs.
+- A tool that appears upstream later starts **disabled** (unless `new_tools_enabled: true`) and you get a persistent notification, plus these events for automations (e.g. to forward to Telegram or a phone):
+  - `kifli_mcp_new_tool` — `tool`, `description`, `enabled`
+  - `kifli_mcp_removed_tool` — `tool`
+- A save from a page that was loaded before another change is rejected ("reload and save again"), so an old browser tab cannot overwrite newer settings.
+- Settings live in `/data/tool_settings.json`. Scripted changes: `POST` to the ingress path `tools` with JSON `{"enabled": ["tool_a", ...]}`.
+
+Example: keep payment, ordering and timeslot booking manual by unchecking e.g. `update_payment_method_checkout`, `reserve_timeslot`, `repeat_order`, `cancel_order`, `submit_claim` — the assistant can still search, fill the cart and read orders, timeslots and the checkout.
+
 ## Networking & security
 - The add-on listens on port **42783** (SSE at `/sse`, mapped to the host) and serves the sign-in page through Home Assistant **ingress** only.
+- The SSE endpoint has **no authentication of its own**: anyone who can reach port 42783 can use your signed-in Kifli account. If only the Home Assistant on the same box uses it, you can clear the host port in the add-on's *Network* settings and point the MCP integration at the internal hostname instead: `http://<add-on hostname>:42783/sse` (the add-on slug with `_` replaced by `-`, e.g. `xxxxxxxx-kifli-mcp-connector`).
 - No password is stored: the add-on keeps an OAuth access/refresh token under `/data/oauth/` (mode 600) and uses it as a Bearer token over HTTPS.
 - `homeassistant_api: true` is used for one thing: reloading the MCP integration after a successful sign-in.
 
@@ -154,6 +171,7 @@ Az add-on célja, hogy a Rohlik Group MCP tooljait (Kifli.hu, Rohlik.cz, Gurkerl
 - **Kifli MCP** oldal a Home Assistant oldalsávjában (ingress) a bejelentkezéshez – jelszó nem tárolódik az add-onban
 - `mcp-proxy` SSE szerver a Home Assistant felé
 - `mcp_schema_shim.py`: schema normalizálás (refs, unions, unsupported kulcsok, üres object properties fix, draft-04 kizáró határok)
+- **Funkciónkénti ki/be kapcsolás** a Kifli MCP oldalon, és értesítés, ha változik az upstream funkciólista (lásd *Funkciók*)
 
 ## Hogyan működik?
 ```
@@ -195,6 +213,7 @@ Amíg nem jelentkezel be, az add-on **üres tool-listát** ad (nem időtúllép�
 | `port` | int | `42783` | SSE szerver port |
 | `country` | list | `hu` | Rohlik Group ország: `hu`, `cz`, `at`, `de`, `ro` (lásd lentebb) |
 | `mcp_url` | string | `""` | (Opcionális) Egyedi MCP végpont; ha kitöltöd, felülírja a `country` szerinti URL-t |
+| `new_tools_enabled` | bool | `false` | Az upstream listán **később** megjelenő funkciók bekapcsolva érkezzenek-e (lásd *Funkciók*) |
 | `email`, `password` | – | – | **2.0 óta elavult**, figyelmen kívül marad. Csak azért van a sémában, hogy a régi konfiguráció ne akadjon fenn az ellenőrzésen – nyugodtan töröld. |
 
 ### Példa
@@ -250,8 +269,23 @@ Ha a felhasználó nem a Kifliről beszél, akkor ne használd az MCP-t.
 A válaszokból szedd ki a kép hivatkozást, azokat a rendszer nem tudja megjeleníteni.
 ```
 
+## Funkciók (ki/be kapcsolás)
+A Kifli MCP oldal **Funkciók** kártyája a Rohlik Group MCP összes eszközét felsorolja, mindegyik mellett egy jelölőnégyzettel (`country: hu` esetén magyar leírással).
+
+- Csak a bepipált funkciókat kapja meg a Home Assistant. A kikapcsoltat a **`tools/call` is elutasítja**, így akkor sem használható, ha valaki közvetlenül az SSE portra csatlakozik.
+- Mentéskor a HA MCP-integráció újratöltődik, a változás másodperceken belül él.
+- A frissítés utáni első induláskor minden épp elérhető funkció bekapcsolt – a meglévő telepítéseknél semmi nem tűnik el.
+- A később megjelenő funkció **kikapcsolva** érkezik (hacsak nem `new_tools_enabled: true`), és állandó értesítés jön róla, valamint automatizáláshoz ezek az események (pl. Telegramra vagy telefonra továbbításhoz):
+  - `kifli_mcp_new_tool` — `tool`, `description`, `enabled`
+  - `kifli_mcp_removed_tool` — `tool`
+- Ha az oldalt egy másik módosítás előtt töltötted be, a mentést elutasítja („frissítsd az oldalt, és mentsd újra”), így egy régi böngészőfül nem írhatja felül az újabb beállítást.
+- A beállítás a `/data/tool_settings.json`-ban van. Gépi módosítás: `POST` az ingress `tools` útvonalra, JSON-nal: `{"enabled": ["tool_a", ...]}`.
+
+Példa: a fizetés, rendelés és idősáv-foglalás maradjon kézi – vedd ki a pipát pl. az `update_payment_method_checkout`, `reserve_timeslot`, `repeat_order`, `cancel_order`, `submit_claim` mellől. Az asszisztens így is keres, kosárba tesz, és látja a rendeléseket, idősávokat és a pénztárt.
+
 ## Hálózat és biztonság
 - Az add-on a **42783** porton figyel (SSE a `/sse` útvonalon, a hostra mappelve), a bejelentkező oldalt kizárólag a Home Assistant **ingress**-en át szolgálja ki.
+- Az SSE végpontnak **nincs saját hitelesítése**: aki eléri a 42783-as portot, az használhatja a bejelentkezett Kifli-fiókodat. Ha csak az ugyanazon a gépen futó Home Assistant használja, az add-on *Hálózat* beállításaiban törölheted a host portot, és az MCP-integrációt a belső hostnévre irányíthatod: `http://<add-on hostnév>:42783/sse` (az add-on slugja, `_` helyett `-` jellel, pl. `xxxxxxxx-kifli-mcp-connector`).
 - Jelszó nem tárolódik: az add-on egy OAuth access/refresh tokent tart a `/data/oauth/` alatt (600-as jogokkal), és azt küldi Bearer tokenként HTTPS-en.
 - A `homeassistant_api: true` egyetlen dologra kell: sikeres bejelentkezés után újratölti az MCP-integrációt.
 

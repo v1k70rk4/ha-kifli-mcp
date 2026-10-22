@@ -1,0 +1,8 @@
+# A tesztek ugyanazzal az MCP SDK-val fussanak, mint az add-on: a kifli_mcp_connector/Dockerfile
+# pinjeivel egyezzen (a tests/test_addon_config.py ellenőrzi).
+mcp==1.26.0
+python-multipart>=0.0.9
+
+pytest>=8
+pyyaml>=6
+jsonschema>=4.20

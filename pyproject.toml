@@ -1,0 +1,8 @@
+# Csak a tesztekhez – az add-on maga a kifli_mcp_connector/ Docker-képből fut.
+# Futtatás: python -m pip install -r tests/requirements.txt && python -m pytest
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# az add-on Python moduljai (mcp_schema_shim, kifli_auth, tool_settings) innen importálhatók
+pythonpath = ["kifli_mcp_connector/rootfs/app"]
+addopts = "-ra"

@@ -24,7 +24,7 @@ import contextlib
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -38,7 +38,7 @@ NOTIFICATION_ID = "kifli_mcp_tools_changed"
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _short(desc: str, limit: int = 160) -> str:

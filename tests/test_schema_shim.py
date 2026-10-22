@@ -8,13 +8,6 @@ import pytest
 from jsonschema import Draft202012Validator
 from mcp_schema_shim import PLACEHOLDER_ARG, simplify_schema
 
-# Known gaps (CodeRabbit on #4): the expected outputs below are correct, the shim does not produce
-# them yet. strict=True makes these tests fail once the shim is fixed, so the marker gets removed.
-KNOWN_GAP = pytest.mark.xfail(
-    strict=True,
-    reason="known gap: the shim loosens this constraint – fix pending (runtime change, needs a version bump)",
-)
-
 
 def _walk(node):
     """Every dict node of the schema, recursively."""
@@ -53,16 +46,40 @@ def test_exclusive_bound_never_loosens_an_existing_bound():
     assert out["properties"]["hi"]["maximum"] == 3
 
 
+@pytest.mark.parametrize(("bounds", "expected"), [
+    ({"exclusiveMinimum": 0.5}, {"minimum": 1}),
+    ({"exclusiveMinimum": -0.5}, {"minimum": 0}),  # the smallest integer greater than -0.5 is 0
+    ({"exclusiveMaximum": 9.5}, {"maximum": 9}),  # the largest integer less than 9.5 is 9
+    ({"exclusiveMaximum": -1}, {"maximum": -2}),
+])
+def test_integer_exclusive_bounds_that_are_not_whole_numbers(bounds, expected):
+    out = simplify_schema(_obj(n={"type": "integer", **bounds}))
+    assert out["properties"]["n"] == {"type": "integer", **expected}
+
+
 def test_draft04_boolean_exclusive_keyword_is_removed():
     out = simplify_schema(_obj(n={"type": "integer", "minimum": 0, "exclusiveMinimum": True}))
     assert "exclusiveMinimum" not in out["properties"]["n"]
 
 
-@KNOWN_GAP
-def test_draft04_exclusive_integer_minimum_stays_strict():
+@pytest.mark.parametrize(("bounds", "expected"), [
     # draft-04: minimum 0 + exclusiveMinimum true rejects 0, so for integers the bound is 1
-    out = simplify_schema(_obj(n={"type": "integer", "minimum": 0, "exclusiveMinimum": True}))
-    assert out["properties"]["n"] == {"type": "integer", "minimum": 1}
+    ({"minimum": 0, "exclusiveMinimum": True}, {"minimum": 1}),
+    ({"maximum": 10, "exclusiveMaximum": True}, {"maximum": 9}),
+    ({"minimum": 0.5, "exclusiveMinimum": True}, {"minimum": 1}),
+    # false means an inclusive bound in draft-04: nothing to tighten
+    ({"minimum": 0, "exclusiveMinimum": False}, {"minimum": 0}),
+])
+def test_draft04_exclusive_integer_bounds_stay_strict(bounds, expected):
+    out = simplify_schema(_obj(n={"type": "integer", **bounds}))
+    assert out["properties"]["n"] == {"type": "integer", **expected}
+
+
+def test_draft04_exclusive_number_keeps_an_inclusive_bound():
+    # a strict bound on a non-integer cannot be expressed without the exclusive keyword,
+    # which Home Assistant's converter breaks (1.2.1) – so the bound stays, inclusive
+    out = simplify_schema(_obj(price={"type": "number", "minimum": 0, "exclusiveMinimum": True}))
+    assert out["properties"]["price"] == {"type": "number", "minimum": 0}
 
 
 def test_no_exclusive_keyword_survives_anywhere():
@@ -134,11 +151,43 @@ def test_allof_keeps_the_type_and_the_title():
     assert out["properties"]["n"]["title"] == "N"
 
 
-@KNOWN_GAP
 def test_allof_keeps_constraints_from_every_branch():
     # the input requires an integer of at least 1; dropping the second branch would allow 0
     out = simplify_schema(_obj(n={"allOf": [{"type": "integer"}, {"minimum": 1}], "title": "N"}))
     assert out["properties"]["n"] == {"type": "integer", "minimum": 1, "title": "N"}
+
+
+def test_allof_takes_the_tighter_bounds_and_sibling_constraints():
+    out = simplify_schema(_obj(n={
+        "allOf": [{"type": "integer", "minimum": 1, "maximum": 100}, {"minimum": 5, "maximum": 50}],
+        "maximum": 20,
+    }))
+    assert out["properties"]["n"] == {"type": "integer", "minimum": 5, "maximum": 20}
+
+
+def test_allof_unions_properties_and_required_and_intersects_enums():
+    out = simplify_schema(_obj(item={"allOf": [
+        {"type": "object", "properties": {"id": {"type": "integer"}, "unit": {"enum": ["kg", "g", "db"]}},
+         "required": ["id"]},
+        {"properties": {"unit": {"enum": ["kg", "db"]}, "amount": {"type": "number", "minimum": 0}},
+         "required": ["amount", "id"]},
+    ]}))
+    item = out["properties"]["item"]
+    assert item["type"] == "object"
+    assert item["required"] == ["id", "amount"]
+    assert item["properties"]["id"] == {"type": "integer"}
+    assert item["properties"]["unit"] == {"enum": ["kg", "db"], "type": "string"}
+    assert item["properties"]["amount"] == {"type": "number", "minimum": 0}
+
+
+def test_allof_parts_behind_refs_are_merged():
+    schema = {
+        "type": "object",
+        "properties": {"qty": {"allOf": [{"$ref": "#/$defs/Positive"}, {"$ref": "#/$defs/Small"}]}},
+        "$defs": {"Positive": {"type": "integer", "exclusiveMinimum": 0}, "Small": {"maximum": 99}},
+    }
+    out = simplify_schema(schema)
+    assert out["properties"]["qty"] == {"type": "integer", "minimum": 1, "maximum": 99}
 
 
 # --- types, unsupported keywords -----------------------------------------------------------------
@@ -200,6 +249,8 @@ SAMPLES = [
     {"type": "object", "properties": {"x": {"$ref": "#/$defs/X"}},
      "$defs": {"X": {"type": "object", "properties": {"y": {"oneOf": [{"type": "integer"}, {"type": "null"}]}}}}},
     {"properties": {"items": {"items": {"enum": ["a"]}, "uniqueItems": True}}},
+    _obj(n={"allOf": [{"type": "integer", "minimum": 0, "exclusiveMinimum": True}, {"maximum": 9.5}],
+            "exclusiveMaximum": 9}),
 ]
 
 

@@ -2,6 +2,26 @@
 
 > 🇭🇺 **Magyarul a lap alján — [ugorj a magyar változatra](#magyar).**
 
+## 2.1.1 — 2026-10-23
+
+**Security — MCP Python SDK updated to 1.30.0**
+
+The add-on ran on `mcp` 1.26.0, which has open security advisories (three of them high): [GHSA-jpw9-pfvf-9f58](https://github.com/advisories/GHSA-jpw9-pfvf-9f58), [GHSA-vj7q-gjh5-988w](https://github.com/advisories/GHSA-vj7q-gjh5-988w), [GHSA-hvrp-rf83-w775](https://github.com/advisories/GHSA-hvrp-rf83-w775) and [GHSA-84m7-p3x7-pcfv](https://github.com/advisories/GHSA-84m7-p3x7-pcfv). The Python dependencies are now pinned in one place (`requirements.txt`), shared by the add-on and the tests, so security updates reach the add-on itself.
+
+**Fixed — tool-list notifications are no longer lost**
+
+If Home Assistant could not be reached when a tool appeared or disappeared upstream, the notification and the `kifli_mcp_new_tool` / `kifli_mcp_removed_tool` events were lost. They are now kept and retried at the next tool listing, and the notification and the events are retried separately, so only what failed is sent again. Each report is now a separate notification, so a later one no longer overwrites an earlier, unread one.
+
+**Fixed — the schema shim no longer loosens tool parameter limits**
+
+The shim rewrites the upstream tool schemas into a form Home Assistant and the LLM APIs accept. In a few cases the rewritten schema allowed values the original did not:
+
+- **`allOf`:** only the first part was kept, so the limits in the other parts were lost (e.g. a quantity that had to be at least 1 could be 0). Now every part counts: the tighter lower and upper bounds, all required fields and all properties are kept, and enums are intersected.
+- **Draft-04 strict bounds** (`"minimum": 0, "exclusiveMinimum": true`): the strictness was dropped, so 0 was allowed. For integers the bound now becomes the next whole number (`minimum: 1`). For decimal numbers the bound stays inclusive, because the strict form is exactly what Home Assistant's converter breaks (see 1.2.1).
+- **Strict bounds that are not whole numbers on integers** were rounded the wrong way (`exclusiveMaximum: 9.5` became `maximum: 8` instead of 9).
+
+Only tool schemas that use these forms are affected; everything else is converted exactly as before. Found by CodeRabbit in the review of [#4](https://github.com/v1k70rk4/ha-kifli-mcp/pull/4).
+
 ## 2.1.0 — 2026-10-23
 
 **New — turn individual Kifli tools on or off**
@@ -97,6 +117,26 @@ The upstream schemas were valid throughout — this is a workaround for a conver
 <a name="magyar"></a>
 
 # 🇭🇺 Változásnapló
+
+## 2.1.1 — 2026-10-23
+
+**Biztonság — az MCP Python SDK 1.30.0-ra frissült**
+
+Az add-on az `mcp` 1.26.0-n futott, amire nyitott biztonsági figyelmeztetések vannak (ebből három magas súlyosságú): [GHSA-jpw9-pfvf-9f58](https://github.com/advisories/GHSA-jpw9-pfvf-9f58), [GHSA-vj7q-gjh5-988w](https://github.com/advisories/GHSA-vj7q-gjh5-988w), [GHSA-hvrp-rf83-w775](https://github.com/advisories/GHSA-hvrp-rf83-w775) és [GHSA-84m7-p3x7-pcfv](https://github.com/advisories/GHSA-84m7-p3x7-pcfv). A Python-függőségek verziója mostantól egy helyen van (`requirements.txt`), közösen az add-onnak és a teszteknek, így a biztonsági frissítések magát az add-ont frissítik.
+
+**Javítva — a funkciólista változásáról szóló jelzés már nem vész el**
+
+Ha egy funkció megjelenésekor vagy megszűnésekor a Home Assistant épp nem volt elérhető, az értesítés és a `kifli_mcp_new_tool` / `kifli_mcp_removed_tool` események elvesztek. Most megmaradnak, és a következő eszközlistázáskor újra kimennek; az értesítést és az eseményeket külön próbálja újra, így csak az megy ki újra, ami nem sikerült. Minden jelzés külön értesítés lett, így egy későbbi nem írja felül a korábbi, még olvasatlan értesítést.
+
+**Javítva — a schema shim már nem lazít az eszközök paraméterkorlátain**
+
+A shim az upstream eszközök sémáit olyan alakra írja át, amit a Home Assistant és az LLM API-k elfogadnak. Néhány esetben az átírt séma olyan értéket is megengedett, amit az eredeti nem:
+
+- **`allOf`:** csak az első rész maradt meg, így a többi rész korlátai elvesztek (pl. egy legalább 1 értékű mennyiség 0 is lehetett). Most minden rész számít: a szigorúbb alsó és felső határ, az összes kötelező mező és tulajdonság megmarad, az enumokból a metszet.
+- **Draft-04-es kizáró határ** (`"minimum": 0, "exclusiveMinimum": true`): a kizárás elveszett, így a 0 is megengedett lett. Egésznél a határ most a következő egész szám (`minimum: 1`). Tört számnál a határ inkluzív marad, mert a kizáró alakot pont a Home Assistant konvertere rontja el (lásd 1.2.1).
+- **Egész típusnál a nem egész kizáró határok** rossz irányba kerekítődtek (`exclusiveMaximum: 9.5`-ből `maximum: 8` lett 9 helyett).
+
+Csak az ilyen alakot használó eszközsémákat érinti; minden más pontosan úgy alakul át, mint eddig. A CodeRabbit találta a [#4](https://github.com/v1k70rk4/ha-kifli-mcp/pull/4) review-jában.
 
 ## 2.1.0 — 2026-10-23
 

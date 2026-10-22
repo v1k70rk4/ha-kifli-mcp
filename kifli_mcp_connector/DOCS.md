@@ -120,6 +120,8 @@ The **Tools** card on the Kifli MCP page lists every tool the Rohlik Group MCP o
 - A tool that appears upstream later starts **disabled** (unless `new_tools_enabled: true`) and you get a persistent notification, plus these events for automations (e.g. to forward to Telegram or a phone):
   - `kifli_mcp_new_tool` — `tool`, `description`, `enabled`
   - `kifli_mcp_removed_tool` — `tool`
+
+  If Home Assistant cannot be reached at that moment, the notification and the events are kept and retried at the next tool listing, so they are not lost (in rare cases an event may arrive twice). Each report is a separate notification.
 - A save from a page that was loaded before another change is rejected ("reload and save again"), so an old browser tab cannot overwrite newer settings.
 - Settings live in `/data/tool_settings.json`. Scripted changes: `POST` to the ingress path `tools` with JSON `{"enabled": ["tool_a", ...]}`.
 
@@ -278,6 +280,8 @@ A Kifli MCP oldal **Funkciók** kártyája a Rohlik Group MCP összes eszközét
 - A később megjelenő funkció **kikapcsolva** érkezik (hacsak nem `new_tools_enabled: true`), és állandó értesítés jön róla, valamint automatizáláshoz ezek az események (pl. Telegramra vagy telefonra továbbításhoz):
   - `kifli_mcp_new_tool` — `tool`, `description`, `enabled`
   - `kifli_mcp_removed_tool` — `tool`
+
+  Ha a Home Assistant éppen nem érhető el, az értesítés és az események megmaradnak, és a következő eszközlistázáskor újra kimennek, így nem vesznek el (ritkán egy esemény kétszer is megérkezhet). Minden jelzés külön értesítés.
 - Ha az oldalt egy másik módosítás előtt töltötted be, a mentést elutasítja („frissítsd az oldalt, és mentsd újra”), így egy régi böngészőfül nem írhatja felül az újabb beállítást.
 - A beállítás a `/data/tool_settings.json`-ban van. Gépi módosítás: `POST` az ingress `tools` útvonalra, JSON-nal: `{"enabled": ["tool_a", ...]}`.
 

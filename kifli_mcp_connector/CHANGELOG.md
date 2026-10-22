@@ -2,6 +2,21 @@
 
 > 🇭🇺 **Magyarul a lap alján — [ugorj a magyar változatra](#magyar).**
 
+## 2.0.1 — 2026-10-22
+
+**Fixed — the add-on did not build on aarch64 (e.g. Home Assistant Green)**
+
+The Dockerfile defaulted `BUILD_FROM` to the `amd64` base image. The add-on has no `build.yaml` (the current Supervisor flags it as deprecated), so the Supervisor only passes `BUILD_ARCH`, and on ARM the build stopped with:
+
+```
+ERROR: failed to solve: ghcr.io/home-assistant/amd64-base:latest: ... no match for platform in manifest: not found
+```
+
+- The base image is now derived from `BUILD_ARCH` (`ghcr.io/home-assistant/${BUILD_ARCH}-base:latest`), so `amd64` and `aarch64` each build on their own base image.
+- No change on `amd64`.
+
+Thanks to [@wenandras](https://github.com/wenandras) for the fix and for testing it on a Home Assistant Green ([#1](https://github.com/v1k70rk4/ha-kifli-mcp/pull/1)).
+
 ## 2.0.0 — 2026-10-16
 
 **Breaking — sign-in is now OAuth; the `email` / `password` options are gone**
@@ -65,6 +80,21 @@ The upstream schemas were valid throughout — this is a workaround for a conver
 <a name="magyar"></a>
 
 # 🇭🇺 Változásnapló
+
+## 2.0.1 — 2026-10-22
+
+**Javítva — az add-on nem buildelt aarch64-en (pl. Home Assistant Green)**
+
+A Dockerfile a `BUILD_FROM`-ban alapértelmezésként az `amd64` alapképet használta. Az add-onnak nincs `build.yaml`-ja (a mostani Supervisor elavultnak jelzi), így a Supervisor csak a `BUILD_ARCH`-ot adja át, ARM-on pedig ezzel állt meg a build:
+
+```
+ERROR: failed to solve: ghcr.io/home-assistant/amd64-base:latest: ... no match for platform in manifest: not found
+```
+
+- Az alapkép most a `BUILD_ARCH`-ból képződik (`ghcr.io/home-assistant/${BUILD_ARCH}-base:latest`), így az `amd64` és az `aarch64` is a saját alapképére épül.
+- `amd64`-en nincs változás.
+
+Köszönjük [@wenandras](https://github.com/wenandras) javítását és a Home Assistant Greenen végzett tesztet ([#1](https://github.com/v1k70rk4/ha-kifli-mcp/pull/1)).
 
 ## 2.0.0 — 2026-10-16
 

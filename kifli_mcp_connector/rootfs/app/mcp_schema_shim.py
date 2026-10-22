@@ -487,6 +487,14 @@ async def main() -> None:
 
     server = Server(SERVER_NAME)
 
+    # keep a reference to fire-and-forget tasks, otherwise asyncio may drop them mid-flight
+    background: set[asyncio.Task] = set()
+
+    def spawn(coro) -> None:
+        task = asyncio.get_running_loop().create_task(coro)
+        background.add(task)
+        task.add_done_callback(background.discard)
+
     @server.list_tools()
     async def list_tools() -> list[types.Tool]:
         remote = upstream.session
@@ -501,9 +509,10 @@ async def main() -> None:
         out: list[types.Tool] = []
 
         # funkciólista nyilvántartása: új / megszűnt eszközök jelzése
-        new, removed = settings.sync({(t.name or ""): (getattr(t, "description", "") or "") for t in res.tools})
-        if new or removed:
-            asyncio.get_running_loop().create_task(notify_ha(new, removed, settings))
+        # (also retries whatever Home Assistant did not accept last time)
+        settings.sync({(t.name or ""): (getattr(t, "description", "") or "") for t in res.tools})
+        if settings.has_pending():
+            spawn(notify_ha(settings))
 
         for t in res.tools:
             name = t.name or ""

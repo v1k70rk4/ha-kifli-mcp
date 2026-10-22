@@ -4,6 +4,14 @@
 
 ## 2.1.1 — 2026-10-23
 
+**Security — MCP Python SDK updated to 1.30.0**
+
+The add-on ran on `mcp` 1.26.0, which has open security advisories (three of them high): [GHSA-jpw9-pfvf-9f58](https://github.com/advisories/GHSA-jpw9-pfvf-9f58), [GHSA-vj7q-gjh5-988w](https://github.com/advisories/GHSA-vj7q-gjh5-988w), [GHSA-hvrp-rf83-w775](https://github.com/advisories/GHSA-hvrp-rf83-w775) and [GHSA-84m7-p3x7-pcfv](https://github.com/advisories/GHSA-84m7-p3x7-pcfv). The Python dependencies are now pinned in one place (`requirements.txt`), shared by the add-on and the tests, so security updates reach the add-on itself.
+
+**Fixed — tool-list notifications are no longer lost**
+
+If Home Assistant could not be reached when a tool appeared or disappeared upstream, the notification and the `kifli_mcp_new_tool` / `kifli_mcp_removed_tool` events were lost. They are now kept and retried at the next tool listing, and the notification and the events are retried separately, so only what failed is sent again. Each report is now a separate notification, so a later one no longer overwrites an earlier, unread one.
+
 **Fixed — the schema shim no longer loosens tool parameter limits**
 
 The shim rewrites the upstream tool schemas into a form Home Assistant and the LLM APIs accept. In a few cases the rewritten schema allowed values the original did not:
@@ -111,6 +119,14 @@ The upstream schemas were valid throughout — this is a workaround for a conver
 # 🇭🇺 Változásnapló
 
 ## 2.1.1 — 2026-10-23
+
+**Biztonság — az MCP Python SDK 1.30.0-ra frissült**
+
+Az add-on az `mcp` 1.26.0-n futott, amire nyitott biztonsági figyelmeztetések vannak (ebből három magas súlyosságú): [GHSA-jpw9-pfvf-9f58](https://github.com/advisories/GHSA-jpw9-pfvf-9f58), [GHSA-vj7q-gjh5-988w](https://github.com/advisories/GHSA-vj7q-gjh5-988w), [GHSA-hvrp-rf83-w775](https://github.com/advisories/GHSA-hvrp-rf83-w775) és [GHSA-84m7-p3x7-pcfv](https://github.com/advisories/GHSA-84m7-p3x7-pcfv). A Python-függőségek verziója mostantól egy helyen van (`requirements.txt`), közösen az add-onnak és a teszteknek, így a biztonsági frissítések magát az add-ont frissítik.
+
+**Javítva — a funkciólista változásáról szóló jelzés már nem vész el**
+
+Ha egy funkció megjelenésekor vagy megszűnésekor a Home Assistant épp nem volt elérhető, az értesítés és a `kifli_mcp_new_tool` / `kifli_mcp_removed_tool` események elvesztek. Most megmaradnak, és a következő eszközlistázáskor újra kimennek; az értesítést és az eseményeket külön próbálja újra, így csak az megy ki újra, ami nem sikerült. Minden jelzés külön értesítés lett, így egy későbbi nem írja felül a korábbi, még olvasatlan értesítést.
 
 **Javítva — a schema shim már nem lazít az eszközök paraméterkorlátain**
 

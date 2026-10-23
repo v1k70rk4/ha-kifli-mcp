@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import copy
 import logging
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,7 @@ from mcp.server.models import InitializationOptions
 from tool_settings import ToolSettings, notify_ha
 
 SERVER_NAME = "kifli-schema-shim"
-SERVER_VERSION = "2.1.0"
+SERVER_VERSION = "2.1.2"
 
 # Tool kihagyó rész, a HA / OpenAI schema-konverzió el tud hasalni rajtuk. v1.1 már kezeli.
 IGNORE_WORDS = {
@@ -95,6 +96,9 @@ def _normalize_exclusive_bounds(node: Any) -> Any:
 
     Ezért itt eleve nem engedjük ki az exclusive* kulcsokat: egész típusnál
     pontos inkluzív határra írjuk át, egyébként a határt megtartva elhagyjuk.
+
+    The draft-04 boolean form (``"minimum": 0, "exclusiveMinimum": true``) is
+    handled the same way: there the minimum/maximum itself is exclusive.
     """
     if isinstance(node, dict):
         node = {k: _normalize_exclusive_bounds(v) for k, v in node.items()}
@@ -102,17 +106,22 @@ def _normalize_exclusive_bounds(node: Any) -> Any:
 
         ex_min = node.pop("exclusiveMinimum", None)
         if isinstance(ex_min, bool):
-            pass  # draft-04 maradvány: csak dobjuk, a "minimum" marad
-        elif isinstance(ex_min, (int, float)):
-            bound = int(ex_min) + 1 if is_int else ex_min
-            node["minimum"] = max(bound, node["minimum"]) if "minimum" in node else bound
+            # draft-04: "minimum" itself is exclusive – the next integer for integers, kept otherwise
+            if ex_min and is_int and _is_number(node.get("minimum")):
+                node["minimum"] = math.floor(node["minimum"]) + 1
+        elif _is_number(ex_min):
+            # the smallest integer GREATER than the bound (-0.5 → 0, 0 → 1, 0.5 → 1)
+            bound = math.floor(ex_min) + 1 if is_int else ex_min
+            node["minimum"] = max(bound, node["minimum"]) if _is_number(node.get("minimum")) else bound
 
         ex_max = node.pop("exclusiveMaximum", None)
         if isinstance(ex_max, bool):
-            pass
-        elif isinstance(ex_max, (int, float)):
-            bound = int(ex_max) - 1 if is_int else ex_max
-            node["maximum"] = min(bound, node["maximum"]) if "maximum" in node else bound
+            if ex_max and is_int and _is_number(node.get("maximum")):
+                node["maximum"] = math.ceil(node["maximum"]) - 1
+        elif _is_number(ex_max):
+            # the largest integer LESS than the bound (9.5 → 9, 10 → 9)
+            bound = math.ceil(ex_max) - 1 if is_int else ex_max
+            node["maximum"] = min(bound, node["maximum"]) if _is_number(node.get("maximum")) else bound
 
         return node
 
@@ -165,6 +174,43 @@ def _inline_local_refs(schema: dict[str, Any]) -> dict[str, Any]:
     return walk(schema)
 
 
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+# allOf: every part must hold, so their constraints are combined
+_LOWER_BOUNDS = ("minimum", "exclusiveMinimum", "minLength", "minItems", "minProperties")
+_UPPER_BOUNDS = ("maximum", "exclusiveMaximum", "maxLength", "maxItems", "maxProperties")
+
+
+def _merge_all_of(parts: list[Any]) -> dict[str, Any]:
+    """The AND of the allOf parts as one schema: the larger lower bound, the
+    smaller upper bound, the union of required and properties, the intersection
+    of enum; for any other key the first occurrence wins (e.g. type, title)."""
+    merged: dict[str, Any] = {}
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        for k, v in part.items():
+            if k not in merged:
+                merged[k] = copy.deepcopy(v)
+            elif k in _LOWER_BOUNDS and _is_number(v) and _is_number(merged[k]):
+                merged[k] = max(merged[k], v)
+            elif k in _UPPER_BOUNDS and _is_number(v) and _is_number(merged[k]):
+                merged[k] = min(merged[k], v)
+            elif k == "required" and isinstance(v, list) and isinstance(merged[k], list):
+                merged[k] = merged[k] + [x for x in v if x not in merged[k]]
+            elif k == "properties" and isinstance(v, dict) and isinstance(merged[k], dict):
+                for pk, pv in v.items():
+                    if pk in merged[k]:
+                        merged[k][pk] = _merge_all_of([merged[k][pk], pv])
+                    else:
+                        merged[k][pk] = copy.deepcopy(pv)
+            elif k == "enum" and isinstance(v, list) and isinstance(merged[k], list):
+                merged[k] = [x for x in merged[k] if x in v]
+    return merged
+
+
 def _pick_non_null_variant(variants: list[Any]) -> Any:
     dict_variants = [v for v in variants if isinstance(v, dict)]
     non_null = [v for v in dict_variants if v.get("type") != "null"]
@@ -196,13 +242,10 @@ def _normalize_unions(node: Any) -> Any:
             return _normalize_unions(chosen)
 
         if "allOf" in node and isinstance(node["allOf"], list) and node["allOf"]:
-            chosen = node["allOf"][0]
-            if isinstance(chosen, dict):
-                chosen = copy.deepcopy(chosen)
-                for k in ("description", "title"):
-                    if k in node and k not in chosen:
-                        chosen[k] = node[k]
-            return _normalize_unions(chosen)
+            # keep every part, not just the first: the other parts (and the sibling keys)
+            # constrain the value too, otherwise the schema would be looser than the original
+            siblings = {k: v for k, v in node.items() if k != "allOf"}
+            return _normalize_unions(_merge_all_of([*node["allOf"], siblings]))
 
         out: dict[str, Any] = {}
         for k, v in node.items():
@@ -444,6 +487,14 @@ async def main() -> None:
 
     server = Server(SERVER_NAME)
 
+    # keep a reference to fire-and-forget tasks, otherwise asyncio may drop them mid-flight
+    background: set[asyncio.Task] = set()
+
+    def spawn(coro) -> None:
+        task = asyncio.get_running_loop().create_task(coro)
+        background.add(task)
+        task.add_done_callback(background.discard)
+
     @server.list_tools()
     async def list_tools() -> list[types.Tool]:
         remote = upstream.session
@@ -458,9 +509,10 @@ async def main() -> None:
         out: list[types.Tool] = []
 
         # funkciólista nyilvántartása: új / megszűnt eszközök jelzése
-        new, removed = settings.sync({(t.name or ""): (getattr(t, "description", "") or "") for t in res.tools})
-        if new or removed:
-            asyncio.get_running_loop().create_task(notify_ha(new, removed, settings))
+        # (also retries whatever Home Assistant did not accept last time)
+        settings.sync({(t.name or ""): (getattr(t, "description", "") or "") for t in res.tools})
+        if settings.has_pending():
+            spawn(notify_ha(settings))
 
         for t in res.tools:
             name = t.name or ""

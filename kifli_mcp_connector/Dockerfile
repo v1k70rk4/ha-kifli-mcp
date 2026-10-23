@@ -19,10 +19,10 @@ RUN python3 -m venv /opt/venv \
 # Python MCP stack. 2.0 óta nincs Node / mcp-remote: az upstream OAuth-ot az
 # mcp SDK beépített kliense intézi, az ingress oldalt a starlette/uvicorn adja
 # (mindkettő az mcp csomag függősége).
-RUN /opt/venv/bin/pip install --no-cache-dir \
-    "mcp==1.26.0" \
-    "mcp-proxy==0.11.0" \
-    "python-multipart>=0.0.9"
+# The versions are pinned in requirements.txt only (shared with the tests).
+COPY requirements.txt /tmp/requirements.txt
+RUN /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt \
+ && rm /tmp/requirements.txt
 
 # Rootfs bemásolása (ebben lesz /app/mcp_schema_shim.py és /app/kifli_auth.py is)
 COPY rootfs/ /

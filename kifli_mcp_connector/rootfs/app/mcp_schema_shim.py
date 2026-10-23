@@ -27,7 +27,7 @@ from mcp.server.models import InitializationOptions
 from tool_settings import ToolSettings, notify_ha
 
 SERVER_NAME = "kifli-schema-shim"
-SERVER_VERSION = "2.1.1"
+SERVER_VERSION = "2.1.2"
 
 # Tool kihagyó rész, a HA / OpenAI schema-konverzió el tud hasalni rajtuk. v1.1 már kezeli.
 IGNORE_WORDS = {

@@ -2,6 +2,16 @@
 
 > 🇭🇺 **Magyarul a lap alján — [ugorj a magyar változatra](#magyar).**
 
+## 2.1.2 — 2026-10-23
+
+**Fixed — you no longer have to sign in again after every restart**
+
+After an add-on restart (an update, a Home Assistant reboot) the sign-in was often lost and the Kifli MCP page asked you to sign in again. The MCP SDK loads the saved token on start but not when it expires, so it sent an already expired access token; the server answered 401, and on a 401 the SDK starts a new sign-in instead of using the refresh token it had.
+
+- The token's expiry and the identity server's details are now saved next to the token, so after a restart an expired token is renewed with the refresh token, without a new sign-in.
+- Tokens saved by earlier versions (without an expiry) are renewed once on the first start; the identity server's details are looked up the same way the SDK does.
+- If renewing is not possible (e.g. the refresh token itself expired), you are asked to sign in, as before.
+
 ## 2.1.1 — 2026-10-23
 
 **Security — MCP Python SDK updated to 1.30.0**
@@ -117,6 +127,16 @@ The upstream schemas were valid throughout — this is a workaround for a conver
 <a name="magyar"></a>
 
 # 🇭🇺 Változásnapló
+
+## 2.1.2 — 2026-10-23
+
+**Javítva — nem kell minden újraindítás után újra bejelentkezni**
+
+Az add-on újraindítása után (frissítés, a Home Assistant újraindítása) a bejelentkezés gyakran elveszett, és a Kifli MCP oldal újra bejelentkezést kért. Az MCP SDK induláskor betölti a mentett tokent, de a lejáratát nem, ezért egy már lejárt hozzáférési tokent küldött; a szerver 401-et adott, az SDK pedig 401-re új bejelentkezést indít ahelyett, hogy a meglévő frissítő tokent használná.
+
+- A token lejárata és az identity szerver adatai mostantól a token mellé mentődnek, így újraindítás után a lejárt tokent a frissítő tokennel újítja meg, új bejelentkezés nélkül.
+- A korábbi verziók által (lejárat nélkül) mentett tokent az első induláskor egyszer megújítja; az identity szerver adatait ugyanúgy keresi meg, mint az SDK.
+- Ha a megújítás nem lehetséges (pl. maga a frissítő token is lejárt), a korábbiakhoz hasonlóan bejelentkezést kér.
 
 ## 2.1.1 — 2026-10-23
 

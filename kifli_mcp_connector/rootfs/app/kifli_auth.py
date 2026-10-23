@@ -24,12 +24,27 @@ import json
 import logging
 import os
 import sys
+import time
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 from mcp.client.auth import OAuthClientProvider, TokenStorage
-from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
+from mcp.client.auth.utils import (
+    build_oauth_authorization_server_metadata_discovery_urls,
+    build_protected_resource_metadata_discovery_urls,
+    create_oauth_metadata_request,
+    handle_auth_metadata_response,
+    handle_protected_resource_response,
+    issuers_match,
+)
+from mcp.shared.auth import (
+    OAuthClientInformationFull,
+    OAuthClientMetadata,
+    OAuthMetadata,
+    OAuthToken,
+)
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -52,6 +67,9 @@ class FileTokenStorage(TokenStorage):
         self.dir.mkdir(parents=True, exist_ok=True)
         self._tokens = self.dir / "tokens.json"
         self._client = self.dir / "client.json"
+        self._server = self.dir / "server.json"
+        # set by AuthManager: the authorization server metadata the SDK currently knows
+        self.metadata_source: Callable[[], OAuthMetadata | None] | None = None
 
     def _read(self, path: Path) -> dict | None:
         try:
@@ -68,10 +86,33 @@ class FileTokenStorage(TokenStorage):
 
     async def get_tokens(self) -> OAuthToken | None:
         data = self._read(self._tokens)
-        return OAuthToken.model_validate(data) if data else None
+        if not data:
+            return None
+        data.pop("expires_at", None)  # our own bookkeeping, not part of the token
+        return OAuthToken.model_validate(data)
 
     async def set_tokens(self, tokens: OAuthToken) -> None:
-        self._write(self._tokens, tokens.model_dump(exclude_none=True))
+        data = tokens.model_dump(exclude_none=True)
+        if tokens.expires_in:
+            # the SDK does not keep the expiry across restarts – see KifliOAuthProvider._initialize
+            data["expires_at"] = time.time() + tokens.expires_in
+        self._write(self._tokens, data)
+        metadata = self.metadata_source() if self.metadata_source else None
+        if metadata is not None:
+            # the authorization server's endpoints: needed to refresh the token after a restart
+            self._write(self._server, metadata.model_dump(mode="json", exclude_none=True))
+
+    def expires_at(self) -> float | None:
+        """When the stored access token expires (epoch seconds); None if unknown."""
+        value = (self._read(self._tokens) or {}).get("expires_at")
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    def get_server_metadata(self) -> OAuthMetadata | None:
+        data = self._read(self._server)
+        try:
+            return OAuthMetadata.model_validate(data) if data else None
+        except ValueError:  # pydantic's ValidationError
+            return None
 
     async def get_client_info(self) -> OAuthClientInformationFull | None:
         data = self._read(self._client)
@@ -84,7 +125,7 @@ class FileTokenStorage(TokenStorage):
         return self._tokens.exists()
 
     def clear(self) -> None:
-        for p in (self._tokens, self._client):
+        for p in (self._tokens, self._client, self._server):
             with contextlib.suppress(FileNotFoundError):
                 p.unlink()
 
@@ -96,6 +137,11 @@ class KifliOAuthProvider(OAuthClientProvider):
     bejelentkezni. A regisztrált kliens scope-ja tartalmazza, az identity
     szerver elfogadja, ezért az engedélykérés előtt visszatesszük."""
 
+    # an instant in the past: "already expired" (0 or None would mean "never expires" to the SDK)
+    _EXPIRED = 1.0
+    # transport for the startup discovery of the authorization server; tests use a fake server
+    discovery_transport: httpx.AsyncBaseTransport | None = None
+
     async def _perform_authorization_code_grant(self) -> tuple[str, str]:
         current = (self.context.client_metadata.scope or "").split()
         for extra in ("offline_access",):
@@ -103,6 +149,49 @@ class KifliOAuthProvider(OAuthClientProvider):
                 current.append(extra)
         self.context.client_metadata.scope = " ".join(current)
         return await super()._perform_authorization_code_grant()
+
+    async def _initialize(self) -> None:
+        """The SDK loads the stored token after a restart, but not its expiry, so it treats the
+        token as valid forever. Once the access token has expired the server answers 401, and on
+        a 401 the SDK starts a full sign-in instead of using the refresh token – so every add-on
+        restart (update, Home Assistant reboot) logged the user out. Restore the saved expiry; a
+        token without one (saved by an older version) counts as expired, so the SDK refreshes it
+        with the refresh token before the first request.
+
+        That refresh also needs the authorization server's token endpoint, which the SDK only
+        learns on a 401: restore it from server.json, or (first start after the update) look it
+        up the way the SDK would. If that fails, nothing changes: a 401 leads to a new sign-in."""
+        await super()._initialize()
+        storage = self.context.storage
+        if self.context.current_tokens is None or not isinstance(storage, FileTokenStorage):
+            return
+        self.context.token_expiry_time = storage.expires_at() or self._EXPIRED
+        if not self.context.is_token_valid() and self.context.can_refresh_token() and not self.context.oauth_metadata:
+            self.context.oauth_metadata = storage.get_server_metadata() or await self._discover_server_metadata()
+
+    async def _discover_server_metadata(self) -> OAuthMetadata | None:
+        """Protected resource metadata → authorization server → its metadata (RFC 9728, RFC 8414)."""
+        try:
+            async with httpx.AsyncClient(timeout=20, transport=self.discovery_transport) as client:
+                prm = None
+                for url in build_protected_resource_metadata_discovery_urls(None, self.context.server_url):
+                    prm = await handle_protected_resource_response(await client.send(create_oauth_metadata_request(url)))
+                    if prm is not None:
+                        break
+                if prm is None or not prm.authorization_servers:
+                    return None
+                auth_server = str(prm.authorization_servers[0])
+                for url in build_oauth_authorization_server_metadata_discovery_urls(auth_server, self.context.server_url):
+                    keep_trying, asm = await handle_auth_metadata_response(
+                        await client.send(create_oauth_metadata_request(url)))
+                    if asm is not None:
+                        # the metadata must belong to the server the resource named (as the SDK checks)
+                        return asm if issuers_match(str(asm.issuer), auth_server) else None
+                    if not keep_trying:
+                        break
+        except httpx.HTTPError as ex:
+            log.warning("Az identity szerver adatai nem érhetők el (%s) – a token frissítése most nem megy.", ex)
+        return None
 
 
 class AuthManager:
@@ -131,6 +220,7 @@ class AuthManager:
             callback_handler=self._wait_for_code,
             timeout=24 * 3600,
         )
+        self.storage.metadata_source = lambda: self.provider.context.oauth_metadata
 
     # --- az SDK hívja ---------------------------------------------------------
     async def _on_redirect(self, url: str) -> None:

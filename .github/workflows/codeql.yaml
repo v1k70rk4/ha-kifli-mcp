@@ -14,8 +14,13 @@ permissions:
 
 jobs:
   analyze:
-    name: Analyze Python
+    # The workflows are analysed too (e.g. untrusted input in run steps, over-broad permissions)
+    name: "Analyze (${{ matrix.language }})"
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, actions]
     permissions:
       security-events: write
       actions: read
@@ -28,10 +33,10 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
-          languages: python
+          languages: ${{ matrix.language }}
           build-mode: none
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
-          category: "/language:python"
+          category: "/language:${{ matrix.language }}"

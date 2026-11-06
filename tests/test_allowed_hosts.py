@@ -73,7 +73,8 @@ def test_authorities(entry, expected):
     assert authorities([entry]) == expected
 
 
-@pytest.mark.parametrize("entry", ["", "bad host", "a,b", "user@host", "host:99999", "host:abc", "host:"])
+@pytest.mark.parametrize("entry", ["", "bad host", "a,b", "user@host", "host:99999", "host:abc", "host:",
+                                   "http://[::1", "http://[::1]:99999/sse"])
 def test_invalid_entries_are_skipped(entry):
     assert authorities([entry, "ok.example"]) == ["ok.example", "ok.example:*"]
 

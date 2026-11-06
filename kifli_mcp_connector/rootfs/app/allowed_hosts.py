@@ -90,7 +90,11 @@ def authorities(hosts: Iterable[str]) -> list[str]:
     for entry in hosts:
         host = entry.strip().lower()
         if "://" in host:  # a URL pasted from the MCP integration
-            host = urlsplit(host).netloc
+            try:
+                host = urlsplit(host).netloc
+            except ValueError:  # e.g. "http://[::1"
+                log.warning("Érvénytelen URL az 'allowed_hosts'-ban, kihagyva: %r", entry)
+                continue
         if not host:
             continue
         if _is_ip(host) and ":" in host.strip("[]"):

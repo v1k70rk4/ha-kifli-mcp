@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # The add-on's Python dependencies are pinned only here; the Dockerfile and the tests install from it
+  - package-ecosystem: "pip"
+    directory: "/kifli_mcp_connector"
+    schedule:
+      interval: "monthly"
+    groups:
+      # One PR for all minor/patch bumps; a major bump (e.g. mcp 2.x) gets its own PR
+      python:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      actions:
+        patterns: ["*"]

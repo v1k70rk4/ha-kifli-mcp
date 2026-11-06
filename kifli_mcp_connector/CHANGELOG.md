@@ -2,6 +2,18 @@
 
 > 🇭🇺 **Magyarul a lap alján — [ugorj a magyar változatra](#magyar).**
 
+## 2.2.0 — 2026-11-06
+
+**Updated — mcp-proxy 0.14.0**
+
+The SSE endpoint is served by `mcp-proxy`, now updated from 0.11.0 to 0.14.0 (security fixes in its dependencies, more reliable sessions). Since 0.13.3 it only answers requests addressed to a host name it knows, as protection against DNS rebinding; any other gets `421 Misdirected Request`. Without the changes below, the update would have cut Home Assistant off from the add-on.
+
+- The add-on now asks the Supervisor for the host's IP addresses and host name and for its own internal host name and IP address, and accepts all of these on any port, so `http://<ha-ip>:42783/sse` and `http://<add-on hostname>:42783/sse` keep working, also with a remapped host port. For the IP addresses the add-on now uses the Supervisor API (`hassio_api`, default role).
+- **New option: `allowed_hosts`** — if Home Assistant reaches the add-on by another name (a DNS name, a reverse proxy), add it here.
+- The accepted host names are printed in the add-on log at start.
+
+The `mcp` 2.x update stays on hold: `mcp-proxy` does not support it yet.
+
 ## 2.1.2 — 2026-10-23
 
 **Fixed — you no longer have to sign in again after every restart**
@@ -127,6 +139,18 @@ The upstream schemas were valid throughout — this is a workaround for a conver
 <a name="magyar"></a>
 
 # 🇭🇺 Változásnapló
+
+## 2.2.0 — 2026-11-06
+
+**Frissítve — mcp-proxy 0.14.0**
+
+Az SSE végpontot az `mcp-proxy` szolgálja ki, ez most 0.11.0-ról 0.14.0-ra frissült (biztonsági javítások a függőségeiben, megbízhatóbb kapcsolatok). A 0.13.3 óta csak az általa ismert hostnévre címzett kérésekre válaszol (védelem a DNS rebinding ellen), minden másra `421 Misdirected Request` a válasz. Az alábbi változások nélkül a frissítés után a Home Assistant nem érte volna el az add-ont.
+
+- Az add-on mostantól lekéri a Supervisortól a gép IP-címeit és hostnevét, valamint a saját belső hostnevét és IP-címét, és ezeket bármelyik porton elfogadja, így a `http://<ha-ip>:42783/sse` és a `http://<add-on hostnév>:42783/sse` továbbra is működik, átírt host porttal is. Az IP-címekhez az add-on mostantól használja a Supervisor API-t (`hassio_api`, alap szerepkör).
+- **Új opció: `allowed_hosts`** — ha a Home Assistant más névvel éri el az add-ont (DNS név, reverse proxy), azt itt add meg.
+- Az elfogadott hostneveket az add-on naplója induláskor kiírja.
+
+Az `mcp` 2.x frissítés egyelőre vár: az `mcp-proxy` még nem támogatja.
 
 ## 2.1.2 — 2026-10-23
 

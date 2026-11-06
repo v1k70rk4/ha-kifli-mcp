@@ -192,9 +192,10 @@ def test_run_script_defaults_to_hungary(country):
 
 
 @needs_bash
-def test_mcp_url_overrides_country():
-    res = _run(port="42783", country="cz", mcp_url="https://mcp.example.test/mcp")
-    assert "KIFLI_MCP_URL=https://mcp.example.test/mcp" in res.stdout.splitlines()
+@pytest.mark.parametrize("mcp_url", ["https://mcp.example.test/mcp", "HTTPS://mcp.example.test/mcp"])
+def test_mcp_url_overrides_country(mcp_url):
+    res = _run(port="42783", country="cz", mcp_url=mcp_url)
+    assert f"KIFLI_MCP_URL={mcp_url}" in res.stdout.splitlines()  # kept as given
 
 
 @needs_bash

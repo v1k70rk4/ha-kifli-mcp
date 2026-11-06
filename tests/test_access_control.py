@@ -187,5 +187,15 @@ def test_another_endpoint_needs_a_new_sign_in(tmp_path):
 @pytest.mark.parametrize("saved_for", [MCP_URL, None], ids=["same-endpoint", "saved-before-2.2.1"])
 def test_the_same_endpoint_keeps_the_sign_in(tmp_path, saved_for):
     _signed_in(tmp_path, saved_for)
+    before = json.loads((tmp_path / "oauth" / "tokens.json").read_text(encoding="utf-8"))
     auth = AuthManager(MCP_URL, tmp_path)
     assert auth.storage.has_tokens()
+    after = json.loads((tmp_path / "oauth" / "tokens.json").read_text(encoding="utf-8"))
+    assert after == {**before, "mcp_url": MCP_URL}  # an older token is bound to the endpoint, nothing else changes
+
+
+def test_an_older_token_is_bound_on_the_first_start(tmp_path):
+    # otherwise it stays unbound until it is refreshed, and a change of endpoint before that goes unnoticed
+    _signed_in(tmp_path, None)
+    AuthManager(MCP_URL, tmp_path)
+    assert not AuthManager("https://mcp.rohlik.cz/mcp", tmp_path).storage.has_tokens()

@@ -125,6 +125,12 @@ class FileTokenStorage(TokenStorage):
         value = (self._read(self._tokens) or {}).get("mcp_url")
         return value if isinstance(value, str) else None
 
+    def bind_tokens(self, mcp_url: str) -> None:
+        """Records the endpoint of tokens saved before 2.2.1, leaving the token and its expiry as they are."""
+        data = self._read(self._tokens)
+        if data is not None:
+            self._write(self._tokens, {**data, "mcp_url": mcp_url})
+
     def get_server_metadata(self) -> OAuthMetadata | None:
         data = self._read(self._server)
         try:
@@ -247,9 +253,12 @@ class AuthManager:
         self.storage.metadata_source = lambda: self.provider.context.oauth_metadata
         self.storage.mcp_url = mcp_url
         # the SDK would send these tokens to the new endpoint before noticing the change (country,
-        # mcp_url); tokens saved before 2.2.1 have no endpoint and belong to the one used so far
+        # mcp_url). Tokens saved before 2.2.1 have no endpoint: they are taken to belong to the current
+        # one, so a change made together with the update cannot be detected.
         issued_for = self.storage.tokens_mcp_url()
-        if issued_for is not None and issued_for != mcp_url:
+        if issued_for is None:
+            self.storage.bind_tokens(mcp_url)
+        elif issued_for != mcp_url:
             log.warning("A mentett bejelentkezés egy másik MCP címhez tartozik (%s) – új bejelentkezés kell.",
                         issued_for)
             self.storage.clear()

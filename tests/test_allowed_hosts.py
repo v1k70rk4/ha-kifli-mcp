@@ -65,9 +65,9 @@ def test_a_failing_supervisor_endpoint_drops_only_its_own_hosts():
     pytest.param("[2001:db8::5]", ["[2001:db8::5]", "[2001:db8::5]:*"], id="bracketed-ipv6"),
     pytest.param("HomeAssistant.Local", ["homeassistant.local", "homeassistant.local:*"], id="case"),
     pytest.param(" mcp.example.com ", ["mcp.example.com", "mcp.example.com:*"], id="whitespace"),
-    pytest.param("mcp.example.com:8443", ["mcp.example.com:8443"], id="with-port"),
-    pytest.param("[::1]:8080", ["[::1]:8080"], id="ipv6-with-port"),
-    pytest.param("http://192.168.1.10:42783/sse", ["192.168.1.10:42783"], id="pasted-url"),
+    pytest.param("mcp.example.com:8443", ["mcp.example.com", "mcp.example.com:*"], id="with-port"),
+    pytest.param("[::1]:8080", ["[::1]", "[::1]:*"], id="ipv6-with-port"),
+    pytest.param("http://192.168.1.10:42783/sse", ["192.168.1.10", "192.168.1.10:*"], id="pasted-url"),
 ])
 def test_authorities(entry, expected):
     assert authorities([entry]) == expected

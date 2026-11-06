@@ -101,7 +101,12 @@ def authorities(hosts: Iterable[str]) -> list[str]:
         if _is_ip(host) and ":" in host.strip("[]"):
             host = f"[{host.strip('[]')}]"
         has_port = host.rsplit("]", 1)[-1].count(":") == 1 if host.startswith("[") else ":" in host
-        candidates = [host] if has_port else [host, f"{host}:*"]
+        if has_port:  # validated with its port, then accepted on any port like every other host
+            if not _valid(host):
+                log.warning("Érvénytelen hostnév az 'allowed_hosts'-ban, kihagyva: %r", entry)
+                continue
+            host = host.rsplit(":", 1)[0]
+        candidates = [host, f"{host}:*"]
         if not all(_valid(candidate) for candidate in candidates):
             log.warning("Érvénytelen hostnév az 'allowed_hosts'-ban, kihagyva: %r", entry)
             continue

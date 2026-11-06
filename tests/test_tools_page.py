@@ -45,7 +45,8 @@ def _call(settings, reload, method, path, **kw) -> httpx.Response:
     app = build_app(AuthManager("https://mcp.kifli.hu/mcp", settings.path.parent), 42783, _login_ok, settings, reload)
 
     async def go():
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://ingress") as c:
+        transport = httpx.ASGITransport(app=app, client=("172.30.32.2", 50000))  # the Supervisor (ingress)
+        async with httpx.AsyncClient(transport=transport, base_url="http://ingress") as c:
             return await c.request(method, path, **kw)
 
     return asyncio.run(go())

@@ -26,9 +26,13 @@ async def _login_ok() -> str:
     return "MCP :42783 → 200"
 
 
-def _client(auth: AuthManager) -> httpx.AsyncClient:
+# the Supervisor's address: the only peer the page accepts (see test_page_rejects_other_peers)
+SUPERVISOR = ("172.30.32.2", 50000)
+
+
+def _client(auth: AuthManager, peer: tuple[str, int] = SUPERVISOR) -> httpx.AsyncClient:
     app = build_app(auth, 42783, _login_ok)
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://ingress")
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=peer), base_url="http://ingress")
 
 
 # --- the pasted redirect URL ---------------------------------------------------------------------

@@ -2,6 +2,16 @@
 
 > 🇭🇺 **Magyarul a lap alján — [ugorj a magyar változatra](#magyar).**
 
+## 2.2.1 — 2026-11-06
+
+**Security — fixes from a security review**
+
+- **Log out now ends the access.** It used to delete only the saved token: the token stayed in memory and the connection to the Kifli MCP stayed open, so the tools kept working although the page said you were logged out. Now the token is forgotten in memory too, the connection is closed (the server is told), a sign-in in progress is abandoned, and tool calls are refused until you sign in again.
+- **The sign-in page only answers Home Assistant ingress.** Its port is not published to the host, but other add-ons on the internal network could open it directly, without Home Assistant's login, and e.g. log you out. It now accepts requests from the Supervisor's address (`172.30.32.2`) only, and no longer trusts forwarded headers, which anyone can set.
+- **The sign-in belongs to one MCP endpoint.** After changing `country` or `mcp_url` the saved token was first sent to the new address. The endpoint is now saved with the token; a different one needs a new sign-in. `mcp_url` must be an `https://` address (the add-on stops with an error otherwise). Tokens saved by earlier versions are taken to belong to the endpoint in use at the first start after the update, so an endpoint change made together with the update cannot be detected.
+
+Not changed: the SSE port (42783) still has no authentication of its own (see *Networking & security* in the documentation).
+
 ## 2.2.0 — 2026-11-06
 
 **Updated — mcp-proxy 0.14.0**
@@ -139,6 +149,16 @@ The upstream schemas were valid throughout — this is a workaround for a conver
 <a name="magyar"></a>
 
 # 🇭🇺 Változásnapló
+
+## 2.2.1 — 2026-11-06
+
+**Biztonság — javítások egy biztonsági átvizsgálás alapján**
+
+- **A kijelentkezés most megszünteti a hozzáférést.** Eddig csak a mentett tokent törölte: a token a memóriában maradt, és a Kifli MCP felé nyitott kapcsolat is élt, így az eszközök tovább működtek, pedig az oldal kijelentkezett állapotot mutatott. Most a token a memóriából is törlődik, a kapcsolat lezárul (a szerver is értesül), a folyamatban lévő bejelentkezés megszakad, és újabb bejelentkezésig az eszközhívásokat elutasítja.
+- **A bejelentkező oldal csak a Home Assistant ingressnek válaszol.** A portja nincs a hostra kivezetve, de a belső hálózaton futó más add-onok közvetlenül, a Home Assistant bejelentkezése nélkül is megnyithatták, és például kijelentkeztethettek. Most csak a Supervisor címéről (`172.30.32.2`) fogad kérést, és nem bízik a továbbított fejlécekben, amelyeket bárki beállíthat.
+- **A bejelentkezés egy MCP végponthoz tartozik.** A `country` vagy az `mcp_url` megváltoztatása után a mentett token először az új címre ment. Most a token mellé a végpont is elmentődik; más végponthoz új bejelentkezés kell. Az `mcp_url` csak `https://` cím lehet (különben az add-on hibával leáll). A korábbi verziók által mentett tokeneket a frissítés utáni első induláskor a használt végponthoz kötjük, így a frissítéssel egy időben végzett végpontváltást nem lehet észrevenni.
+
+Nem változott: az SSE portnak (42783) továbbra sincs saját hitelesítése (lásd a dokumentáció *Hálózat és biztonság* részét).
 
 ## 2.2.0 — 2026-11-06
 

@@ -25,7 +25,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -46,9 +46,16 @@ from mcp.shared.auth import (
     OAuthToken,
 )
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
+from starlette.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+)
 from starlette.routing import Route
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 log = logging.getLogger("kifli.auth")
 
@@ -70,6 +77,8 @@ class FileTokenStorage(TokenStorage):
         self._server = self.dir / "server.json"
         # set by AuthManager: the authorization server metadata the SDK currently knows
         self.metadata_source: Callable[[], OAuthMetadata | None] | None = None
+        # set by AuthManager: the MCP endpoint the tokens are issued for, saved with them
+        self.mcp_url: str | None = None
 
     def _read(self, path: Path) -> dict | None:
         try:
@@ -88,7 +97,9 @@ class FileTokenStorage(TokenStorage):
         data = self._read(self._tokens)
         if not data:
             return None
-        data.pop("expires_at", None)  # our own bookkeeping, not part of the token
+        # our own bookkeeping, not part of the token
+        data.pop("expires_at", None)
+        data.pop("mcp_url", None)
         return OAuthToken.model_validate(data)
 
     async def set_tokens(self, tokens: OAuthToken) -> None:
@@ -96,6 +107,8 @@ class FileTokenStorage(TokenStorage):
         if tokens.expires_in:
             # the SDK does not keep the expiry across restarts – see KifliOAuthProvider._initialize
             data["expires_at"] = time.time() + tokens.expires_in
+        if self.mcp_url:
+            data["mcp_url"] = self.mcp_url
         self._write(self._tokens, data)
         metadata = self.metadata_source() if self.metadata_source else None
         if metadata is not None:
@@ -106,6 +119,17 @@ class FileTokenStorage(TokenStorage):
         """When the stored access token expires (epoch seconds); None if unknown."""
         value = (self._read(self._tokens) or {}).get("expires_at")
         return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    def tokens_mcp_url(self) -> str | None:
+        """The MCP endpoint the stored tokens were issued for; None if saved before 2.2.1."""
+        value = (self._read(self._tokens) or {}).get("mcp_url")
+        return value if isinstance(value, str) else None
+
+    def bind_tokens(self, mcp_url: str) -> None:
+        """Records the endpoint of tokens saved before 2.2.1, leaving the token and its expiry as they are."""
+        data = self._read(self._tokens)
+        if data is not None:
+            self._write(self._tokens, {**data, "mcp_url": mcp_url})
 
     def get_server_metadata(self) -> OAuthMetadata | None:
         data = self._read(self._server)
@@ -128,6 +152,10 @@ class FileTokenStorage(TokenStorage):
         for p in (self._tokens, self._client, self._server):
             with contextlib.suppress(FileNotFoundError):
                 p.unlink()
+
+
+class LoginCancelled(RuntimeError):
+    """The sign-in in progress was abandoned by a logout."""
 
 
 class KifliOAuthProvider(OAuthClientProvider):
@@ -205,6 +233,9 @@ class AuthManager:
         self.error: str | None = None
         self.logged_in = asyncio.Event()
         self._code: asyncio.Future[tuple[str, str | None]] | None = None
+        # run on logout before the tokens are dropped (e.g. closing the upstream session)
+        self.logout_hooks: list[Callable[[], Awaitable[None]]] = []
+        self._logouts = 0  # lets a sign-in notice a logout that happened while it ran
         self.provider = KifliOAuthProvider(
             server_url=mcp_url,
             client_metadata=OAuthClientMetadata(
@@ -221,6 +252,17 @@ class AuthManager:
             timeout=24 * 3600,
         )
         self.storage.metadata_source = lambda: self.provider.context.oauth_metadata
+        self.storage.mcp_url = mcp_url
+        # the SDK would send these tokens to the new endpoint before noticing the change (country,
+        # mcp_url). Tokens saved before 2.2.1 have no endpoint: they are taken to belong to the current
+        # one, so a change made together with the update cannot be detected.
+        issued_for = self.storage.tokens_mcp_url()
+        if issued_for is None:
+            self.storage.bind_tokens(mcp_url)
+        elif issued_for != mcp_url:
+            log.warning("A mentett bejelentkezés egy másik MCP címhez tartozik (%s) – új bejelentkezés kell.",
+                        issued_for)
+            self.storage.clear()
 
     # --- az SDK hívja ---------------------------------------------------------
     async def _on_redirect(self, url: str) -> None:
@@ -264,16 +306,32 @@ class AuthManager:
         return None
 
     async def logout(self) -> None:
-        self.storage.clear()
+        """Ends the access, not just the saved state: the tokens in memory, the upstream session and a
+        sign-in in progress go too."""
+        self._logouts += 1
         self.logged_in.clear()
         self.status = "needs_login"
         self.auth_url = None
+        self.error = None
+        if self._code is not None and not self._code.done():
+            self._code.set_exception(LoginCancelled("Kijelentkezés / logged out"))
+        for hook in self.logout_hooks:
+            await hook()
+        self._forget()
+
+    def _forget(self) -> None:
+        self.storage.clear()
+        context = self.provider.context
+        context.clear_tokens()
+        context.client_info = None
+        context.oauth_metadata = None
 
     # --- bejelentkezés kikényszerítése ----------------------------------------
     async def ensure_logged_in(self) -> None:
         """Egy hitelesített kérés az MCP végpontra: ha nincs érvényes token, az SDK
         lefuttatja a teljes OAuth folyamatot (felfedezés, regisztráció, redirect,
         kód bevárása, token csere). Sikeres végén tokenünk van."""
+        logouts = self._logouts
         self.error = None
         if not self.storage.has_tokens():
             self.status = "needs_login"
@@ -290,6 +348,10 @@ class AuthManager:
         headers = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
         async with httpx.AsyncClient(auth=self.provider, timeout=httpx.Timeout(60.0)) as client:
             resp = await client.post(self.mcp_url, json=body, headers=headers)
+        if self._logouts != logouts:
+            # logged out while the token exchange was running: drop the tokens it saved
+            self._forget()
+            raise LoginCancelled("Kijelentkezés a bejelentkezés közben / logged out during sign-in")
         if resp.status_code == 401:
             raise RuntimeError(f"A bejelentkezés után is 401: {resp.text[:200]}")
         resp.raise_for_status()
@@ -430,7 +492,28 @@ akkor sem lehet meghívni, ha valaki közvetlenül a portra csatlakozik. Az újo
 <button type="submit">Mentés / Save</button></form></div>"""
 
 
-def build_app(auth: AuthManager, port: int, on_login_ok, settings=None, on_tools_saved=None) -> Starlette:
+# Home Assistant ingress connects from the Supervisor only; anything else on the add-on network must
+# not reach the sign-in page (https://developers.home-assistant.io/docs/add-ons/presentation#ingress)
+SUPERVISOR_INGRESS = frozenset({"172.30.32.2"})
+
+
+class OnlyFrom:
+    """Rejects HTTP requests whose peer address (not a forwarded header) is not in ``clients``."""
+
+    def __init__(self, app: ASGIApp, clients: frozenset[str]) -> None:
+        self.app = app
+        self.clients = clients
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        peer = (scope.get("client") or (None,))[0]
+        if scope["type"] == "http" and peer not in self.clients:
+            await PlainTextResponse("Forbidden", status_code=403)(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
+def build_app(auth: AuthManager, port: int, on_login_ok, settings=None, on_tools_saved=None,
+              allowed_clients: frozenset[str] = SUPERVISOR_INGRESS) -> Starlette:
     def render(message: str | None = None, msg_class: str = "err") -> HTMLResponse:
         cls, text = STATUS_TEXT.get(auth.status, ("warn", auth.status))
         status_html = f'<span class="{cls}">{html.escape(text)}</span>'
@@ -521,12 +604,14 @@ def build_app(auth: AuthManager, port: int, on_login_ok, settings=None, on_tools
         Route("/logout", logout, methods=["POST"]),
         Route("/tools", tools, methods=["POST"]),
         Route("/status", status),
-    ])
+    ], middleware=[Middleware(OnlyFrom, clients=allowed_clients)])
 
 
 async def _safe_login(auth: AuthManager) -> None:
     try:
         await auth.ensure_logged_in()
+    except LoginCancelled:
+        log.info("A folyamatban lévő bejelentkezés megszakítva (kijelentkezés).")
     except Exception as ex:  # noqa: BLE001
         auth.status = "error"
         auth.error = f"{type(ex).__name__}: {ex}"

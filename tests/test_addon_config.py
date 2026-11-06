@@ -192,9 +192,10 @@ def test_run_script_defaults_to_hungary(country):
 
 
 @needs_bash
-def test_mcp_url_overrides_country():
-    res = _run(port="42783", country="cz", mcp_url="https://mcp.example.test/mcp")
-    assert "KIFLI_MCP_URL=https://mcp.example.test/mcp" in res.stdout.splitlines()
+@pytest.mark.parametrize("mcp_url", ["https://mcp.example.test/mcp", "HTTPS://mcp.example.test/mcp"])
+def test_mcp_url_overrides_country(mcp_url):
+    res = _run(port="42783", country="cz", mcp_url=mcp_url)
+    assert f"KIFLI_MCP_URL={mcp_url}" in res.stdout.splitlines()  # kept as given
 
 
 @needs_bash
@@ -246,3 +247,13 @@ def test_run_script_starts_even_if_the_allowed_hosts_helper_fails():
     assert res.returncode == 0, res.stderr
     assert "--allowed-host" not in _mcp_proxy_args(res)
     assert "WARNING" in res.stderr and "allowed_hosts" in res.stderr
+
+
+@needs_bash
+@pytest.mark.parametrize("mcp_url", ["http://mcp.example.test/mcp", "mcp.example.test/mcp", "ftp://mcp.example.test"])
+def test_mcp_url_must_be_https(mcp_url):
+    # the Kifli access token is sent there
+    res = _run(port="42783", country="hu", mcp_url=mcp_url)
+    assert res.returncode == 1
+    assert "FATAL" in res.stderr
+    assert "KIFLI_MCP_URL" not in res.stdout

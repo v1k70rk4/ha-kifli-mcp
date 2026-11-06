@@ -245,3 +245,4 @@ def test_run_script_starts_even_if_the_allowed_hosts_helper_fails():
     res = _run(port="42783", country="hu", allowed_hosts="false")
     assert res.returncode == 0, res.stderr
     assert "--allowed-host" not in _mcp_proxy_args(res)
+    assert "WARNING" in res.stderr and "allowed_hosts" in res.stderr

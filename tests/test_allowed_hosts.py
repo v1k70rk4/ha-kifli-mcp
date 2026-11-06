@@ -73,10 +73,11 @@ def test_authorities(entry, expected):
     assert authorities([entry]) == expected
 
 
-@pytest.mark.parametrize("entry", ["", "bad host", "a,b", "user@host", "host:99999", "host:abc", "host:",
+@pytest.mark.parametrize("entry", ["", "http://", "bad host", "a,b", "user@host", "host:99999", "host:abc", "host:",
                                    "http://[::1", "http://[::1]:99999/sse"])
-def test_invalid_entries_are_skipped(entry):
+def test_invalid_entries_are_skipped(entry, caplog):
     assert authorities([entry, "ok.example"]) == ["ok.example", "ok.example:*"]
+    assert "kihagyva" in caplog.text
 
 
 def test_duplicates_are_listed_once():

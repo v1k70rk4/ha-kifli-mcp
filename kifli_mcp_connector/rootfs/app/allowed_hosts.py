@@ -96,6 +96,7 @@ def authorities(hosts: Iterable[str]) -> list[str]:
                 log.warning("Érvénytelen URL az 'allowed_hosts'-ban, kihagyva: %r", entry)
                 continue
         if not host:
+            log.warning("Üres hostnév az 'allowed_hosts'-ban, kihagyva: %r", entry)
             continue
         if _is_ip(host) and ":" in host.strip("[]"):
             host = f"[{host.strip('[]')}]"

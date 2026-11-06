@@ -50,7 +50,17 @@ else
   export KIFLI_NEW_TOOLS_ENABLED="false"
 fi
 
+# mcp-proxy rejects requests to any other Host than these (and loopback), see allowed_hosts.py
+ALLOWED_HOSTS=()
+while IFS= read -r host; do
+  ALLOWED_HOSTS+=("--allowed-host=${host}")
+done < <(/opt/venv/bin/python3 /app/allowed_hosts.py || true)
+if [ "${#ALLOWED_HOSTS[@]}" -eq 0 ]; then
+  bashio::log.warning "Nincs elfogadott SSE hostnév – a Home Assistant kérései 421-et kaphatnak. Add meg őket az 'allowed_hosts'-ban. / No SSE hosts collected: add them to 'allowed_hosts'."
+fi
+
 bashio::log.info "Starting Kifli MCP bridge on port ${PORT} (country=${COUNTRY}, url=${URL}) ..."
+bashio::log.info "SSE allowed hosts: ${ALLOWED_HOSTS[*]#--allowed-host=}"
 bashio::log.info "Bejelentkezés / sign-in: nyisd meg a 'Kifli MCP' oldalt a Home Assistant oldalsávjában (ingress)."
 
 exec /opt/venv/bin/mcp-proxy \
@@ -58,5 +68,6 @@ exec /opt/venv/bin/mcp-proxy \
   --port="${PORT}" \
   --pass-environment \
   --log-level=INFO \
+  "${ALLOWED_HOSTS[@]}" \
   -- \
   /opt/venv/bin/python3 /app/mcp_schema_shim.py

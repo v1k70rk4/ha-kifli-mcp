@@ -46,15 +46,16 @@ The add-on then appears in the Store.
 (Slovakia is not operated by Rohlik Group. Use the add-on's `mcp_url` option for any unlisted endpoint.)
 
 ## Security notes
-- The add-on asks for login credentials (email/password) for the Rohlik Group service.
-- The password is stored in the Home Assistant add-on configuration.
-- The add-on uses **host network** mode (see the add-on README).
+- No password is stored: you sign in with OAuth on the add-on's **Kifli MCP** page (Home Assistant ingress), and the add-on keeps only an access/refresh token under `/data/oauth/`.
+- No host network: the SSE endpoint is published on port **42783**, the sign-in page only through ingress.
+- The SSE endpoint has **no authentication of its own** (anyone who can reach port 42783 can use your signed-in account) and only answers requests addressed to a host name it knows: the Home Assistant host's IP addresses and names, the add-on's internal host name, and the ones in `allowed_hosts`.
+- Details: [*Networking & security* in DOCS.md](./kifli_mcp_connector/DOCS.md#networking--security).
 
 ---
 
 <a name="magyar"></a>
 
-# 🇭🇺 Magyar — Rohlik Group (kifli.hu) MCP Connector
+# 🇭🇺 Magyar — Rohlik Group (hu, cz, at, de, ro) MCP Connector
 
 Home Assistant add-on repository: **Rohlik Group (hu, cz, at, de, ro) MCP Connector**.
 
@@ -94,6 +95,7 @@ Ezután az add-on megjelenik a Store-ban.
 (Szlovákiában a Rohlik Group nem üzemeltet szolgáltatást. Nem listázott végponthoz használd az add-on `mcp_url` opcióját.)
 
 ## Biztonsági megjegyzések
-- Az add-on bejelentkezési adatokat (email/jelszó) kér a Rohlik Group szolgáltatáshoz.
-- A jelszó a Home Assistant add-on konfigurációjában tárolódik.
-- Az add-on a működéshez **host network** módot használ (lásd add-on README).
+- Jelszó nem tárolódik: a bejelentkezés OAuth-tal történik az add-on **Kifli MCP** oldalán (Home Assistant ingress), az add-on csak egy access/refresh tokent tart a `/data/oauth/` alatt.
+- Nincs host network: az SSE végpont a **42783**-as porton érhető el, a bejelentkező oldal csak ingressen át.
+- Az SSE végpontnak **nincs saját hitelesítése** (aki eléri a 42783-as portot, használhatja a bejelentkezett fiókodat), és csak az általa ismert hostnévre címzett kérésekre válaszol: a Home Assistant gép IP-címeire és neveire, az add-on belső hostnevére és az `allowed_hosts`-ban megadottakra.
+- Részletek: [*Hálózat és biztonság* a DOCS.md-ben](./kifli_mcp_connector/DOCS.md#hálózat-és-biztonság).

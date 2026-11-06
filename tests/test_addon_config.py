@@ -146,18 +146,28 @@ exec() {
   echo "KIFLI_MCP_URL=${KIFLI_MCP_URL}"
   echo "KIFLI_PORT=${KIFLI_PORT}"
   echo "KIFLI_NEW_TOOLS_ENABLED=${KIFLI_NEW_TOOLS_ENABLED-}"
+  echo "ARGS=$*"
   exit 0
 }
-source "$1"
+eval "$1"
 """
 
+# Needs the Supervisor, so the tests replace it with a command printing a fixed list (see test_allowed_hosts.py)
+ALLOWED_HOSTS_HELPER = "/opt/venv/bin/python3 /app/allowed_hosts.py"
 
-def _run(**cfg: str) -> subprocess.CompletedProcess:
+
+def _run(*, allowed_hosts: str = "true", **cfg: str) -> subprocess.CompletedProcess:
+    script = RUN.read_text(encoding="utf-8")
+    assert ALLOWED_HOSTS_HELPER in script
     env = {"PATH": os.environ.get("PATH", ""), **{f"CFG_{k}": v for k, v in cfg.items()}}
     return subprocess.run(
-        [BASH, "-c", BASHIO_STUB, "run-test", RUN.as_posix()],
+        [BASH, "-c", BASHIO_STUB, "run-test", script.replace(ALLOWED_HOSTS_HELPER, allowed_hosts)],
         env=env, capture_output=True, text=True, timeout=30, check=False,
     )
+
+
+def _mcp_proxy_args(res: subprocess.CompletedProcess) -> str:
+    return next(line for line in res.stdout.splitlines() if line.startswith("ARGS=")).removeprefix("ARGS=")
 
 
 needs_bash = pytest.mark.skipif(BASH is None, reason="bash not available")
@@ -218,3 +228,21 @@ def test_new_tools_enabled_is_exported(value, expected):
     res = _run(**cfg)
     assert res.returncode == 0, res.stderr
     assert f"KIFLI_NEW_TOOLS_ENABLED={expected}" in res.stdout.splitlines()
+
+
+@needs_bash
+def test_run_script_passes_each_allowed_host_to_mcp_proxy():
+    # without them mcp-proxy >= 0.13.3 answers 421 to Home Assistant (#7)
+    res = _run(port="42783", country="hu", allowed_hosts="printf '%s\n' 192.168.1.10 '192.168.1.10:*' '[fe80::1]:*'")
+    assert res.returncode == 0, res.stderr
+    args = _mcp_proxy_args(res)
+    expected = "--allowed-host=192.168.1.10 --allowed-host=192.168.1.10:* --allowed-host=[fe80::1]:*"
+    assert expected in args.split(" -- ", 1)[0]
+
+
+@needs_bash
+def test_run_script_starts_even_if_the_allowed_hosts_helper_fails():
+    res = _run(port="42783", country="hu", allowed_hosts="false")
+    assert res.returncode == 0, res.stderr
+    assert "--allowed-host" not in _mcp_proxy_args(res)
+    assert "WARNING" in res.stderr and "allowed_hosts" in res.stderr

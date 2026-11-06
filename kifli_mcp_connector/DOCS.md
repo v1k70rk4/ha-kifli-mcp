@@ -56,6 +56,7 @@ Until you sign in the add-on serves an **empty tool list** (instead of timing ou
 | `country` | list | `hu` | Rohlik Group country: `hu`, `cz`, `at`, `de`, `ro` (see below) |
 | `mcp_url` | string | `""` | (Optional) Custom MCP endpoint; overrides the `country`-based URL |
 | `new_tools_enabled` | bool | `false` | Whether tools that appear upstream **later** start enabled (see *Tools*) |
+| `allowed_hosts` | list | `[]` | (Optional) Extra host names the SSE endpoint answers to, e.g. a DNS name or a reverse proxy; the host's IP addresses and names are accepted without it (see *Networking & security*) |
 | `email`, `password` | – | – | **Deprecated since 2.0**, ignored. Left in the schema only so old configurations still validate – you can delete them. |
 
 ### Example
@@ -130,6 +131,8 @@ Example: keep payment, ordering and timeslot booking manual by unchecking e.g. `
 ## Networking & security
 - The add-on listens on port **42783** (SSE at `/sse`, mapped to the host) and serves the sign-in page through Home Assistant **ingress** only.
 - The SSE endpoint has **no authentication of its own**: anyone who can reach port 42783 can use your signed-in Kifli account. If only the Home Assistant on the same box uses it, you can clear the host port in the add-on's *Network* settings and point the MCP integration at the internal hostname instead: `http://<add-on hostname>:42783/sse` (the add-on slug with `_` replaced by `-`, e.g. `xxxxxxxx-kifli-mcp-connector`).
+- The SSE endpoint only answers requests addressed to a host name it knows (protection against DNS rebinding); any other gets `421 Misdirected Request`. Accepted on any port: the host's IP addresses, its host name (also with `.local`), the add-on's internal host name and IP address, `localhost`, and whatever you list in `allowed_hosts`. The add-on log shows the list at start. If Home Assistant uses another name in the SSE URL (a DNS name, a reverse proxy), add it to `allowed_hosts`.
+- `hassio_api: true` (default role) is used to read the host's IP addresses and names from the Supervisor for the list above.
 - No password is stored: the add-on keeps an OAuth access/refresh token under `/data/oauth/` (mode 600) and uses it as a Bearer token over HTTPS.
 - `homeassistant_api: true` is used for one thing: reloading the MCP integration after a successful sign-in.
 
@@ -141,6 +144,7 @@ Example: keep payment, ordering and timeslot booking manual by unchecking e.g. `
 - **The browser says "can't reach localhost:3334" after login:** that is the normal last step – copy the URL and paste it on the Kifli MCP page.
 - **"RHL-EMAIL/RHL-PASS header login is obsolete" in the log / `Timeout when listing tools` in Home Assistant:** you are on 1.x; update to 2.0 and sign in via OAuth.
 - **No tools appear in Home Assistant:** confirm the add-on is running and the SSE URL is exactly `http://<ha-ip>:42783/sse`; reload the MCP integration.
+- **The MCP integration gets `421 Misdirected Request` (log: `Invalid Host header: ...`):** the SSE URL uses a host name the add-on does not know (see *Networking & security*). Add it to `allowed_hosts` and restart the add-on.
 - **Check the logs:** the startup line logs the resolved `country` and `url`, so you can verify the correct endpoint is being used.
 - **Every MCP tool disappears at once, and the LLM errors with `tools.NN.custom.input_schema: JSON schema is invalid` (Home Assistant 2026.9+):**
   Fixed in add-on **1.2.1** — update and restart the add-on.
@@ -216,6 +220,7 @@ Amíg nem jelentkezel be, az add-on **üres tool-listát** ad (nem időtúllép�
 | `country` | list | `hu` | Rohlik Group ország: `hu`, `cz`, `at`, `de`, `ro` (lásd lentebb) |
 | `mcp_url` | string | `""` | (Opcionális) Egyedi MCP végpont; ha kitöltöd, felülírja a `country` szerinti URL-t |
 | `new_tools_enabled` | bool | `false` | Az upstream listán **később** megjelenő funkciók bekapcsolva érkezzenek-e (lásd *Funkciók*) |
+| `allowed_hosts` | list | `[]` | (Opcionális) További hostnevek, amelyekre az SSE végpont válaszol, pl. egy DNS név vagy reverse proxy; a gép IP-címeit és nevét enélkül is elfogadja (lásd *Hálózat és biztonság*) |
 | `email`, `password` | – | – | **2.0 óta elavult**, figyelmen kívül marad. Csak azért van a sémában, hogy a régi konfiguráció ne akadjon fenn az ellenőrzésen – nyugodtan töröld. |
 
 ### Példa
@@ -290,6 +295,8 @@ Példa: a fizetés, rendelés és idősáv-foglalás maradjon kézi – vedd ki 
 ## Hálózat és biztonság
 - Az add-on a **42783** porton figyel (SSE a `/sse` útvonalon, a hostra mappelve), a bejelentkező oldalt kizárólag a Home Assistant **ingress**-en át szolgálja ki.
 - Az SSE végpontnak **nincs saját hitelesítése**: aki eléri a 42783-as portot, az használhatja a bejelentkezett Kifli-fiókodat. Ha csak az ugyanazon a gépen futó Home Assistant használja, az add-on *Hálózat* beállításaiban törölheted a host portot, és az MCP-integrációt a belső hostnévre irányíthatod: `http://<add-on hostnév>:42783/sse` (az add-on slugja, `_` helyett `-` jellel, pl. `xxxxxxxx-kifli-mcp-connector`).
+- Az SSE végpont csak az általa ismert hostnévre címzett kérésekre válaszol (védelem a DNS rebinding ellen), minden másra `421 Misdirected Request` a válasz. Bármelyik porton elfogadja: a gép IP-címeit, a hostnevét (`.local`-lal is), az add-on belső hostnevét és IP-címét, a `localhost`-ot és amit az `allowed_hosts`-ban megadsz. A listát az add-on naplója induláskor kiírja. Ha a Home Assistant más névvel éri el az SSE URL-t (DNS név, reverse proxy), vedd fel az `allowed_hosts`-ba.
+- A `hassio_api: true` (alap szerepkör) arra kell, hogy a fenti listához a Supervisortól lekérje a gép IP-címeit és nevét.
 - Jelszó nem tárolódik: az add-on egy OAuth access/refresh tokent tart a `/data/oauth/` alatt (600-as jogokkal), és azt küldi Bearer tokenként HTTPS-en.
 - A `homeassistant_api: true` egyetlen dologra kell: sikeres bejelentkezés után újratölti az MCP-integrációt.
 
@@ -301,6 +308,7 @@ Példa: a fizetés, rendelés és idősáv-foglalás maradjon kézi – vedd ki 
 - **Bejelentkezés után a böngésző „nem lehet elérni a localhost:3334” hibát ír:** ez a normális utolsó lépés – másold ki a címet, és illeszd be a Kifli MCP oldalon.
 - **„RHL-EMAIL/RHL-PASS header login is obsolete” a logban / `Timeout when listing tools` a Home Assistantban:** 1.x verzión vagy; frissíts 2.0-ra, és jelentkezz be OAuth-tal.
 - **Nem jelennek meg toolok a Home Assistantban:** ellenőrizd, hogy az add-on fut, és az SSE URL pontosan `http://<ha-ip>:42783/sse`; töltsd újra az MCP integrációt.
+- **Az MCP-integráció `421 Misdirected Request` hibát kap (a naplóban: `Invalid Host header: ...`):** az SSE URL olyan hostnevet használ, amit az add-on nem ismer (lásd *Hálózat és biztonság*). Vedd fel az `allowed_hosts`-ba, és indítsd újra az add-ont.
 - **Nézd a logot:** az indulási sor kiírja a feloldott `country` és `url` értéket, így ellenőrizheted, hogy a megfelelő végpontot használja.
 - **Egyszerre eltűnik az összes MCP tool, és az LLM `tools.NN.custom.input_schema: JSON schema is invalid` hibát ad (Home Assistant 2026.9+):**
   Javítva az add-on **1.2.1**-es verziójában — frissíts és indítsd újra az add-ont.

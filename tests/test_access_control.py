@@ -112,6 +112,27 @@ def test_logout_abandons_a_sign_in_in_progress(tmp_path):
     assert auth.auth_url is None
 
 
+def test_logout_during_the_token_exchange_wins(tmp_path, monkeypatch):
+    # the SDK saves the new tokens before the sign-in request returns; a logout in between must stick
+    auth = AuthManager(MCP_URL, tmp_path)
+    real_client = httpx.AsyncClient
+
+    async def server(req: httpx.Request) -> httpx.Response:
+        await auth.logout()
+        await auth.storage.set_tokens(OAuthToken(access_token="NEW", token_type="Bearer"))
+        auth.provider.context.current_tokens = OAuthToken(access_token="NEW", token_type="Bearer")
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 0, "result": {}})
+
+    monkeypatch.setattr(kifli_auth.httpx, "AsyncClient",
+                        lambda **kw: real_client(**kw, transport=httpx.MockTransport(server)))
+    with pytest.raises(LoginCancelled):
+        asyncio.run(auth.ensure_logged_in())
+    assert not auth.logged_in.is_set()
+    assert auth.status == "needs_login"
+    assert not auth.storage.has_tokens()
+    assert auth.provider.context.current_tokens is None
+
+
 def test_an_abandoned_sign_in_is_not_reported_as_an_error(tmp_path, monkeypatch):
     auth = AuthManager(MCP_URL, tmp_path)
     auth.status = "needs_login"

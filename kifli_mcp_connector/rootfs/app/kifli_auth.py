@@ -235,6 +235,7 @@ class AuthManager:
         self._code: asyncio.Future[tuple[str, str | None]] | None = None
         # run on logout before the tokens are dropped (e.g. closing the upstream session)
         self.logout_hooks: list[Callable[[], Awaitable[None]]] = []
+        self._logouts = 0  # lets a sign-in notice a logout that happened while it ran
         self.provider = KifliOAuthProvider(
             server_url=mcp_url,
             client_metadata=OAuthClientMetadata(
@@ -307,6 +308,7 @@ class AuthManager:
     async def logout(self) -> None:
         """Ends the access, not just the saved state: the tokens in memory, the upstream session and a
         sign-in in progress go too."""
+        self._logouts += 1
         self.logged_in.clear()
         self.status = "needs_login"
         self.auth_url = None
@@ -315,6 +317,9 @@ class AuthManager:
             self._code.set_exception(LoginCancelled("Kijelentkezés / logged out"))
         for hook in self.logout_hooks:
             await hook()
+        self._forget()
+
+    def _forget(self) -> None:
         self.storage.clear()
         context = self.provider.context
         context.clear_tokens()
@@ -326,6 +331,7 @@ class AuthManager:
         """Egy hitelesített kérés az MCP végpontra: ha nincs érvényes token, az SDK
         lefuttatja a teljes OAuth folyamatot (felfedezés, regisztráció, redirect,
         kód bevárása, token csere). Sikeres végén tokenünk van."""
+        logouts = self._logouts
         self.error = None
         if not self.storage.has_tokens():
             self.status = "needs_login"
@@ -342,6 +348,10 @@ class AuthManager:
         headers = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
         async with httpx.AsyncClient(auth=self.provider, timeout=httpx.Timeout(60.0)) as client:
             resp = await client.post(self.mcp_url, json=body, headers=headers)
+        if self._logouts != logouts:
+            # logged out while the token exchange was running: drop the tokens it saved
+            self._forget()
+            raise LoginCancelled("Kijelentkezés a bejelentkezés közben / logged out during sign-in")
         if resp.status_code == 401:
             raise RuntimeError(f"A bejelentkezés után is 401: {resp.text[:200]}")
         resp.raise_for_status()

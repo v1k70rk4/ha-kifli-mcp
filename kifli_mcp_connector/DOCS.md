@@ -45,7 +45,7 @@ The Rohlik identity server only allows a `http://localhost:…` redirect for the
 3. Copy the **whole URL** from the address bar and paste it into the box on the Kifli MCP page, then **Submit**.
 4. The add-on exchanges the code for a token, stores it under `/data/oauth/` and reloads the Home Assistant MCP integration, so the tools appear within seconds.
 
-Until you sign in the add-on serves an **empty tool list** (instead of timing out), so the rest of Assist keeps working. If the token ever becomes invalid, the page shows the sign-in again. **Log out** on the page deletes the stored token.
+Until you sign in the add-on serves an **empty tool list** (instead of timing out), so the rest of Assist keeps working. If the token ever becomes invalid, the page shows the sign-in again. **Log out** on the page ends the access at once: it deletes the stored token, forgets it in memory and closes the connection to the Kifli MCP, so the tools stop working until you sign in again. The sign-in belongs to one MCP endpoint: after changing `country` or `mcp_url` you have to sign in again.
 
 ## Configuration
 
@@ -54,7 +54,7 @@ Until you sign in the add-on serves an **empty tool list** (instead of timing ou
 |-----|------|---------|-------------|
 | `port` | int | `42783` | SSE server port |
 | `country` | list | `hu` | Rohlik Group country: `hu`, `cz`, `at`, `de`, `ro` (see below) |
-| `mcp_url` | string | `""` | (Optional) Custom MCP endpoint; overrides the `country`-based URL |
+| `mcp_url` | string | `""` | (Optional) Custom MCP endpoint (`https://` only); overrides the `country`-based URL |
 | `new_tools_enabled` | bool | `false` | Whether tools that appear upstream **later** start enabled (see *Tools*) |
 | `allowed_hosts` | list | `[]` | (Optional) Extra host names the SSE endpoint answers to, e.g. a DNS name or a reverse proxy; the host's IP addresses and names are accepted without it (see *Networking & security*) |
 | `email`, `password` | – | – | **Deprecated since 2.0**, ignored. Left in the schema only so old configurations still validate – you can delete them. |
@@ -129,7 +129,7 @@ The **Tools** card on the Kifli MCP page lists every tool the Rohlik Group MCP o
 Example: keep payment, ordering and timeslot booking manual by unchecking e.g. `update_payment_method_checkout`, `reserve_timeslot`, `repeat_order`, `cancel_order`, `submit_claim` — the assistant can still search, fill the cart and read orders, timeslots and the checkout.
 
 ## Networking & security
-- The add-on listens on port **42783** (SSE at `/sse`, mapped to the host) and serves the sign-in page through Home Assistant **ingress** only.
+- The add-on listens on port **42783** (SSE at `/sse`, mapped to the host) and serves the sign-in page through Home Assistant **ingress** only: the page answers the Supervisor's address (`172.30.32.2`) only, so other add-ons on the internal network cannot reach it.
 - The SSE endpoint has **no authentication of its own**: anyone who can reach port 42783 can use your signed-in Kifli account. If only the Home Assistant on the same box uses it, you can clear the host port in the add-on's *Network* settings and point the MCP integration at the internal hostname instead: `http://<add-on hostname>:42783/sse` (the add-on slug with `_` replaced by `-`, e.g. `xxxxxxxx-kifli-mcp-connector`).
 - The SSE endpoint only answers requests addressed to a host name it knows (protection against DNS rebinding); any other gets `421 Misdirected Request`. Accepted on any port: the host's IP addresses, its host name (also with `.local`), the add-on's internal host name and IP address, `localhost`, and whatever you list in `allowed_hosts`. The add-on log shows the list at start. If Home Assistant uses another name in the SSE URL (a DNS name, a reverse proxy), add it to `allowed_hosts`.
 - `hassio_api: true` (default role) is used to read the host's IP addresses and names from the Supervisor for the list above.
@@ -209,7 +209,7 @@ A Rohlik identity-szervere csak `http://localhost:…` visszahívási címet eng
 3. Másold ki a **teljes címet** a címsorból, illeszd be a Kifli MCP oldal mezőjébe, majd **Beküldés**.
 4. Az add-on tokenre cseréli a kódot, elmenti a `/data/oauth/` alá, és újratölti a Home Assistant MCP-integrációját – a toolok másodperceken belül megjelennek.
 
-Amíg nem jelentkezel be, az add-on **üres tool-listát** ad (nem időtúllépést), így az Assist többi része zavartalanul működik. Ha a token valaha érvénytelenné válik, az oldal újra a bejelentkezést mutatja. A **Kijelentkezés** gomb törli a tárolt tokent.
+Amíg nem jelentkezel be, az add-on **üres tool-listát** ad (nem időtúllépést), így az Assist többi része zavartalanul működik. Ha a token valaha érvénytelenné válik, az oldal újra a bejelentkezést mutatja. A **Kijelentkezés** gomb azonnal megszünteti a hozzáférést: törli a tárolt tokent, a memóriából is, és lezárja a Kifli MCP felé nyitott kapcsolatot, így az eszközök az újabb bejelentkezésig nem működnek. A bejelentkezés egy MCP végponthoz tartozik: a `country` vagy az `mcp_url` megváltoztatása után újra be kell jelentkezni.
 
 ## Konfiguráció
 
@@ -218,7 +218,7 @@ Amíg nem jelentkezel be, az add-on **üres tool-listát** ad (nem időtúllép�
 |------|------|------|--------|
 | `port` | int | `42783` | SSE szerver port |
 | `country` | list | `hu` | Rohlik Group ország: `hu`, `cz`, `at`, `de`, `ro` (lásd lentebb) |
-| `mcp_url` | string | `""` | (Opcionális) Egyedi MCP végpont; ha kitöltöd, felülírja a `country` szerinti URL-t |
+| `mcp_url` | string | `""` | (Opcionális) Egyedi MCP végpont (csak `https://`); ha kitöltöd, felülírja a `country` szerinti URL-t |
 | `new_tools_enabled` | bool | `false` | Az upstream listán **később** megjelenő funkciók bekapcsolva érkezzenek-e (lásd *Funkciók*) |
 | `allowed_hosts` | list | `[]` | (Opcionális) További hostnevek, amelyekre az SSE végpont válaszol, pl. egy DNS név vagy reverse proxy; a gép IP-címeit és nevét enélkül is elfogadja (lásd *Hálózat és biztonság*) |
 | `email`, `password` | – | – | **2.0 óta elavult**, figyelmen kívül marad. Csak azért van a sémában, hogy a régi konfiguráció ne akadjon fenn az ellenőrzésen – nyugodtan töröld. |
@@ -293,7 +293,7 @@ A Kifli MCP oldal **Funkciók** kártyája a Rohlik Group MCP összes eszközét
 Példa: a fizetés, rendelés és idősáv-foglalás maradjon kézi – vedd ki a pipát pl. az `update_payment_method_checkout`, `reserve_timeslot`, `repeat_order`, `cancel_order`, `submit_claim` mellől. Az asszisztens így is keres, kosárba tesz, és látja a rendeléseket, idősávokat és a pénztárt.
 
 ## Hálózat és biztonság
-- Az add-on a **42783** porton figyel (SSE a `/sse` útvonalon, a hostra mappelve), a bejelentkező oldalt kizárólag a Home Assistant **ingress**-en át szolgálja ki.
+- Az add-on a **42783** porton figyel (SSE a `/sse` útvonalon, a hostra mappelve), a bejelentkező oldalt kizárólag a Home Assistant **ingress**-en át szolgálja ki: az oldal csak a Supervisor címéről (`172.30.32.2`) érkező kérésekre válaszol, így a belső hálózaton futó többi add-on nem éri el.
 - Az SSE végpontnak **nincs saját hitelesítése**: aki eléri a 42783-as portot, az használhatja a bejelentkezett Kifli-fiókodat. Ha csak az ugyanazon a gépen futó Home Assistant használja, az add-on *Hálózat* beállításaiban törölheted a host portot, és az MCP-integrációt a belső hostnévre irányíthatod: `http://<add-on hostnév>:42783/sse` (az add-on slugja, `_` helyett `-` jellel, pl. `xxxxxxxx-kifli-mcp-connector`).
 - Az SSE végpont csak az általa ismert hostnévre címzett kérésekre válaszol (védelem a DNS rebinding ellen), minden másra `421 Misdirected Request` a válasz. Bármelyik porton elfogadja: a gép IP-címeit, a hostnevét (`.local`-lal is), az add-on belső hostnevét és IP-címét, a `localhost`-ot és amit az `allowed_hosts`-ban megadsz. A listát az add-on naplója induláskor kiírja. Ha a Home Assistant más névvel éri el az SSE URL-t (DNS név, reverse proxy), vedd fel az `allowed_hosts`-ba.
 - A `hassio_api: true` (alap szerepkör) arra kell, hogy a fenti listához a Supervisortól lekérje a gép IP-címeit és nevét.

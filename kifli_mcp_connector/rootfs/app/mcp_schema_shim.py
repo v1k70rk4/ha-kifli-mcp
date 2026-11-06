@@ -14,6 +14,7 @@ import mcp.server.stdio
 import uvicorn
 from kifli_auth import (
     AuthManager,
+    LoginCancelled,
     build_app,
     reload_ha_mcp_entry,
     reload_ha_mcp_entry_result,
@@ -27,7 +28,7 @@ from mcp.server.models import InitializationOptions
 from tool_settings import ToolSettings, notify_ha
 
 SERVER_NAME = "kifli-schema-shim"
-SERVER_VERSION = "2.2.0"
+SERVER_VERSION = "2.2.1"
 
 # Tool kihagyó rész, a HA / OpenAI schema-konverzió el tud hasalni rajtuk. v1.1 már kezeli.
 IGNORE_WORDS = {
@@ -392,7 +393,10 @@ class Upstream:
         self.session: ClientSession | None = None
         self.ready = asyncio.Event()
         self._lost = asyncio.Event()
+        self._idle = asyncio.Event()  # no session open
+        self._idle.set()
         self.log = logging.getLogger("kifli.upstream")
+        auth.logout_hooks.append(self.close)
 
     async def run(self) -> None:
         backoff = 5
@@ -404,6 +408,7 @@ class Upstream:
                     streamablehttp_client(self.url, auth=self.auth.provider) as (r, w, _),
                     ClientSession(r, w) as session,
                 ):
+                    self._idle.clear()
                     await session.initialize()
                     self.session = session
                     self.ready.set()
@@ -418,6 +423,7 @@ class Upstream:
             finally:
                 self.session = None
                 self.ready.clear()
+                self._idle.set()
             if not self.auth.logged_in.is_set():
                 continue  # kijelentkeztek: várunk az új bejelentkezésre
             await asyncio.sleep(backoff)
@@ -425,6 +431,28 @@ class Upstream:
 
     def mark_lost(self) -> None:
         self._lost.set()
+
+    async def close(self) -> None:
+        """Ends the session on logout, while its token is still in memory to tell the server too."""
+        self._lost.set()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(self._idle.wait(), timeout=10)
+
+
+def ingress_server(app, port: int) -> uvicorn.Server:
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host="0.0.0.0",
+            port=port,
+            log_level="warning",
+            # the page accepts the Supervisor's address only, so it needs the real peer, never a
+            # forwarded header; it uses relative URLs, so it does not need them either
+            proxy_headers=False,
+        )
+    )
+    server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+    return server
 
 
 async def main() -> None:
@@ -458,17 +486,7 @@ async def main() -> None:
             log.warning("Funkciólista mentve, de a HA MCP integráció újratöltése nem sikerült: %s", note)
         return ok, note
 
-    web = uvicorn.Server(
-        uvicorn.Config(
-            build_app(auth, sse_port, on_login_ok, settings, on_tools_saved),
-            host="0.0.0.0",
-            port=ingress_port,
-            log_level="warning",
-            proxy_headers=True,
-            forwarded_allow_ips="*",
-        )
-    )
-    web.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+    web = ingress_server(build_app(auth, sse_port, on_login_ok, settings, on_tools_saved), ingress_port)
 
     async def serve_web() -> None:
         try:
@@ -480,6 +498,8 @@ async def main() -> None:
         try:
             await auth.ensure_logged_in()
             await on_login_ok()
+        except LoginCancelled:
+            log.info("A folyamatban lévő bejelentkezés megszakítva (kijelentkezés).")
         except Exception as ex:  # noqa: BLE001
             auth.status = "error"
             auth.error = f"{type(ex).__name__}: {ex}"
@@ -498,7 +518,7 @@ async def main() -> None:
     @server.list_tools()
     async def list_tools() -> list[types.Tool]:
         remote = upstream.session
-        if remote is None:
+        if remote is None or not auth.logged_in.is_set():
             log.info("tools/list bejelentkezés nélkül → üres lista (nyisd meg az add-on oldalát)")
             return []
         try:
@@ -548,7 +568,7 @@ async def main() -> None:
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any] | None = None):
         remote = upstream.session
-        if remote is None:
+        if remote is None or not auth.logged_in.is_set():
             raise RuntimeError(
                 "A Kifli MCP nincs bejelentkezve. Nyisd meg a 'Kifli MCP' oldalt a Home Assistant "
                 "oldalsávjában, és jelentkezz be. / Not logged in to the Kifli MCP – open the "

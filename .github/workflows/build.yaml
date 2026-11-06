@@ -5,6 +5,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     # Build the way the Supervisor does: pass only BUILD_ARCH (no BUILD_FROM), on a native

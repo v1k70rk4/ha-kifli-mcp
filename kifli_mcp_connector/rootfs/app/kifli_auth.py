@@ -188,13 +188,15 @@ class KifliOAuthProvider(OAuthClientProvider):
 
         That refresh also needs the authorization server's token endpoint, which the SDK only
         learns on a 401: restore it from server.json, or (first start after the update) look it
-        up the way the SDK would. If that fails, nothing changes: a 401 leads to a new sign-in."""
+        up the way the SDK would. If that fails, nothing changes: a 401 leads to a new sign-in.
+        Restore it even if the token is still valid: when it expires later while the add-on runs,
+        the SDK would otherwise refresh at <MCP server>/token, fail and ask for a new sign-in."""
         await super()._initialize()
         storage = self.context.storage
         if self.context.current_tokens is None or not isinstance(storage, FileTokenStorage):
             return
         self.context.token_expiry_time = storage.expires_at() or self._EXPIRED
-        if not self.context.is_token_valid() and self.context.can_refresh_token() and not self.context.oauth_metadata:
+        if self.context.can_refresh_token() and not self.context.oauth_metadata:
             self.context.oauth_metadata = storage.get_server_metadata() or await self._discover_server_metadata()
 
     async def _discover_server_metadata(self) -> OAuthMetadata | None:

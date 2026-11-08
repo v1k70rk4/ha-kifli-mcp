@@ -120,6 +120,30 @@ def test_restart_with_a_valid_token_uses_it_directly(tmp_path):
     assert server.calls == ["mcp Bearer STORED-ACCESS"]  # no needless refresh
 
 
+def test_token_expiring_while_running_is_refreshed(tmp_path):
+    """2.1.2–2.2.1: started with a still valid token, the add-on asked for a new sign-in once it expired."""
+    _stored_sign_in(tmp_path, expires_at=time.time() + 120)
+    server = FakeKifli()
+    server.valid_token = "STORED-ACCESS"
+    auth = AuthManager(MCP, tmp_path)
+    auth.provider.discovery_transport = httpx.MockTransport(server)
+
+    async def go():
+        async with httpx.AsyncClient(auth=auth.provider, transport=httpx.MockTransport(server), timeout=5) as c:
+            assert (await c.post(MCP, json={})).status_code == 200
+            auth.provider.context.token_expiry_time = time.time() - 1  # the access token expires meanwhile
+            server.valid_token = "NEW-ACCESS"
+            return await asyncio.wait_for(c.post(MCP, json={}), 3)
+
+    try:
+        resp = asyncio.run(go())
+    except TimeoutError:
+        resp = None  # waiting for a browser sign-in
+    assert auth.auth_url is None, f"asked for a new sign-in: {server.calls}"
+    assert resp is not None and resp.status_code == 200
+    assert server.calls == ["mcp Bearer STORED-ACCESS", "token refresh_token", "mcp Bearer NEW-ACCESS"]
+
+
 def test_rejected_refresh_token_asks_for_a_new_sign_in(tmp_path):
     _stored_sign_in(tmp_path, expires_at=time.time() - 60)
     server = FakeKifli(refresh_ok=False)

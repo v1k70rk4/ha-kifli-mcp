@@ -2,6 +2,12 @@
 
 > 🇭🇺 **Magyarul a lap alján — [ugorj a magyar változatra](#magyar).**
 
+## 2.2.2 — 2026-11-08
+
+**Fixed — no new sign-in when the token expires while the add-on runs**
+
+If the add-on started with a still valid sign-in (e.g. a restart soon after the previous one), the token could not be renewed once it expired while the add-on was running: the add-on logged a new sign-in link, and Assist could not use the Kifli tools until the add-on was restarted. Since 2.1.2 the identity server's details were restored at start only if the token had already expired; without them the MCP SDK tried to renew the token at the wrong address, then asked for a sign-in. They are now restored whenever the token can be renewed. If you are affected: restart the add-on, no new sign-in is needed.
+
 ## 2.2.1 — 2026-11-06
 
 **Security — fixes from a security review**
@@ -149,6 +155,12 @@ The upstream schemas were valid throughout — this is a workaround for a conver
 <a name="magyar"></a>
 
 # 🇭🇺 Változásnapló
+
+## 2.2.2 — 2026-11-08
+
+**Javítva — nem kér új bejelentkezést, ha a token futás közben jár le**
+
+Ha az add-on még érvényes bejelentkezéssel indult (pl. egy korábbi után nem sokkal újraindítva), a tokent nem tudta megújítani, amikor az futás közben lejárt: a naplóba új bejelentkező linket írt, és az Assist az add-on újraindításáig nem érte el a Kifli funkciókat. A 2.1.2 óta az identity szerver adatait induláskor csak akkor töltötte vissza, ha a token már lejárt; ezek nélkül az MCP SDK rossz címen próbálta megújítani a tokent, majd bejelentkezést kért. Most mindig visszatölti, ha a token megújítható. Ha érint: indítsd újra az add-ont, új bejelentkezés nem kell.
 
 ## 2.2.1 — 2026-11-06
 

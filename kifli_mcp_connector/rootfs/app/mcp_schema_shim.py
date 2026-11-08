@@ -14,8 +14,8 @@ import mcp.server.stdio
 import uvicorn
 from kifli_auth import (
     AuthManager,
-    LoginCancelled,
     build_app,
+    login_at_start,
     reload_ha_mcp_entry,
     reload_ha_mcp_entry_result,
     setup_logging,
@@ -28,7 +28,7 @@ from mcp.server.models import InitializationOptions
 from tool_settings import ToolSettings, notify_ha
 
 SERVER_NAME = "kifli-schema-shim"
-SERVER_VERSION = "2.2.1"
+SERVER_VERSION = "2.2.2"
 
 # Tool kihagyó rész, a HA / OpenAI schema-konverzió el tud hasalni rajtuk. v1.1 már kezeli.
 IGNORE_WORDS = {
@@ -494,17 +494,6 @@ async def main() -> None:
         except Exception as ex:  # noqa: BLE001
             log.error("Ingress oldal nem indult (%s) – a bejelentkező link a naplóban lesz.", ex)
 
-    async def initial_login() -> None:
-        try:
-            await auth.ensure_logged_in()
-            await on_login_ok()
-        except LoginCancelled:
-            log.info("A folyamatban lévő bejelentkezés megszakítva (kijelentkezés).")
-        except Exception as ex:  # noqa: BLE001
-            auth.status = "error"
-            auth.error = f"{type(ex).__name__}: {ex}"
-            log.error("Kifli OAuth bejelentkezés sikertelen: %s", auth.error)
-
     server = Server(SERVER_NAME)
 
     # keep a reference to fire-and-forget tasks, otherwise asyncio may drop them mid-flight
@@ -607,7 +596,7 @@ async def main() -> None:
     async with anyio.create_task_group() as tg:
         tg.start_soon(serve_web)
         tg.start_soon(upstream.run)
-        tg.start_soon(initial_login)
+        tg.start_soon(login_at_start, auth, on_login_ok)
         await serve_stdio()
         tg.cancel_scope.cancel()
 

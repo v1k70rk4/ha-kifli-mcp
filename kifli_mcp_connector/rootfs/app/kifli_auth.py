@@ -30,7 +30,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
-from mcp.client.auth import OAuthClientProvider, TokenStorage
+from mcp.client.auth import OAuthClientProvider, OAuthTokenError, TokenStorage
 from mcp.client.auth.utils import (
     build_oauth_authorization_server_metadata_discovery_urls,
     build_protected_resource_metadata_discovery_urls,
@@ -186,16 +186,30 @@ class KifliOAuthProvider(OAuthClientProvider):
         token without one (saved by an older version) counts as expired, so the SDK refreshes it
         with the refresh token before the first request.
 
-        That refresh also needs the authorization server's token endpoint, which the SDK only
-        learns on a 401: restore it from server.json, or (first start after the update) look it
-        up the way the SDK would. If that fails, nothing changes: a 401 leads to a new sign-in."""
+        The refresh also needs the authorization server's token endpoint: it comes from
+        server.json here, or is looked up right before the refresh (see _refresh_token)."""
         await super()._initialize()
         storage = self.context.storage
         if self.context.current_tokens is None or not isinstance(storage, FileTokenStorage):
             return
         self.context.token_expiry_time = storage.expires_at() or self._EXPIRED
-        if not self.context.is_token_valid() and self.context.can_refresh_token() and not self.context.oauth_metadata:
-            self.context.oauth_metadata = storage.get_server_metadata() or await self._discover_server_metadata()
+        if not self.context.oauth_metadata:
+            self.context.oauth_metadata = storage.get_server_metadata()
+
+    async def _refresh_token(self) -> httpx.Request:
+        """The SDK learns the token endpoint only on a 401. Without it, it refreshes at
+        <MCP server>/token, which fails, drops the token and asks for a new sign-in – after a
+        restart, and also when a token expires while the add-on runs (2.1.2–2.2.1 restored the
+        endpoint only if the token had already expired at start). So restore or look it up first;
+        if the identity server cannot be reached, keep the sign-in and let the request fail, to
+        be retried later, instead of sending the refresh token to the wrong place."""
+        if not self.context.oauth_metadata:
+            storage = self.context.storage
+            stored = storage.get_server_metadata() if isinstance(storage, FileTokenStorage) else None
+            self.context.oauth_metadata = stored or await self._discover_server_metadata()
+        if not self.context.oauth_metadata:
+            raise OAuthTokenError("Az identity szerver nem érhető el – a token frissítését később újra megpróbálja.")
+        return await super()._refresh_token()
 
     async def _discover_server_metadata(self) -> OAuthMetadata | None:
         """Protected resource metadata → authorization server → its metadata (RFC 9728, RFC 8414)."""
@@ -605,6 +619,30 @@ def build_app(auth: AuthManager, port: int, on_login_ok, settings=None, on_tools
         Route("/tools", tools, methods=["POST"]),
         Route("/status", status),
     ], middleware=[Middleware(OnlyFrom, clients=allowed_clients)])
+
+
+async def login_at_start(auth: AuthManager, on_login_ok, retry_delay: float = 30) -> None:
+    """The sign-in at add-on start, with the stored token if there is one. If the identity server
+    cannot be reached to renew it, the stored sign-in is kept and renewing is tried again later."""
+    while True:
+        try:
+            await auth.ensure_logged_in()
+            await on_login_ok()
+        except LoginCancelled:
+            log.info("A folyamatban lévő bejelentkezés megszakítva (kijelentkezés).")
+        except OAuthTokenError as ex:
+            auth.status = "error"
+            auth.error = f"{type(ex).__name__}: {ex}"
+            log.warning("A token frissítése nem sikerült (%s) – újra %.0f s múlva.", ex, retry_delay)
+            await asyncio.sleep(retry_delay)
+            if not auth.logged_in.is_set() and auth.storage.has_tokens():
+                retry_delay = min(retry_delay * 2, 600)
+                continue
+        except Exception as ex:  # noqa: BLE001
+            auth.status = "error"
+            auth.error = f"{type(ex).__name__}: {ex}"
+            log.error("Kifli OAuth bejelentkezés sikertelen: %s", auth.error)
+        return
 
 
 async def _safe_login(auth: AuthManager) -> None:

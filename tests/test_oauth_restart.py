@@ -14,8 +14,8 @@ from urllib.parse import parse_qs
 
 import httpx
 import pytest
-from kifli_auth import AuthManager, KifliOAuthProvider
-from mcp.client.auth import OAuthClientProvider
+from kifli_auth import AuthManager, KifliOAuthProvider, login_at_start
+from mcp.client.auth import OAuthClientProvider, OAuthTokenError
 from mcp.shared.auth import OAuthClientInformationFull
 
 MCP = "https://mcp.kifli.hu/mcp"
@@ -120,7 +120,7 @@ def test_restart_with_a_valid_token_uses_it_directly(tmp_path):
     assert server.calls == ["mcp Bearer STORED-ACCESS"]  # no needless refresh
 
 
-def test_token_expiring_while_running_is_refreshed(tmp_path):
+def test_token_expiring_while_running_is_refreshed(tmp_path, monkeypatch):
     """2.1.2–2.2.1: started with a still valid token, the add-on asked for a new sign-in once it expired."""
     _stored_sign_in(tmp_path, expires_at=time.time() + 120)
     server = FakeKifli()
@@ -128,10 +128,13 @@ def test_token_expiring_while_running_is_refreshed(tmp_path):
     auth = AuthManager(MCP, tmp_path)
     auth.provider.discovery_transport = httpx.MockTransport(server)
 
+    real_time = time.time
+
     async def go():
         async with httpx.AsyncClient(auth=auth.provider, transport=httpx.MockTransport(server), timeout=5) as c:
             assert (await c.post(MCP, json={})).status_code == 200
-            auth.provider.context.token_expiry_time = time.time() - 1  # the access token expires meanwhile
+            # the access token expires meanwhile (its expiry is the one restored from tokens.json)
+            monkeypatch.setattr(time, "time", lambda: real_time() + 600)
             server.valid_token = "NEW-ACCESS"
             return await asyncio.wait_for(c.post(MCP, json={}), 3)
 
@@ -166,7 +169,7 @@ def test_token_expiry_is_saved_but_not_handed_to_the_sdk(tmp_path):
 def test_the_sdk_still_has_the_private_hooks_we_override():
     # KifliOAuthProvider overrides private SDK methods; an mcp update that renames them would make
     # the overrides silently dead code (no offline_access, logged out after every restart)
-    for name in ("_initialize", "_perform_authorization_code_grant"):
+    for name in ("_initialize", "_perform_authorization_code_grant", "_refresh_token"):
         assert name in vars(OAuthClientProvider), f"OAuthClientProvider.{name} is gone – check KifliOAuthProvider"
         assert name in vars(KifliOAuthProvider)
 
@@ -193,12 +196,31 @@ def test_restart_uses_the_saved_server_metadata_without_discovery(tmp_path):
     assert server.discovery_requests == 0
 
 
-def test_failed_discovery_falls_back_to_signing_in_as_before(tmp_path):
-    # only our startup lookup fails (e.g. a network hiccup); the SDK's own flow then works as before
+def test_unreachable_identity_server_keeps_the_sign_in_for_a_retry(tmp_path):
+    # e.g. a network hiccup: neither a refresh at the wrong address nor a new sign-in
     _stored_sign_in(tmp_path, expires_at=None)
-    auth, resp = _first_request_after_restart(tmp_path, FakeKifli(), discovery=lambda _req: httpx.Response(503))
-    assert resp is None
-    assert auth.auth_url is not None
+    server = FakeKifli()
+    auth = AuthManager(MCP, tmp_path)
+    discovery_ok = False
+
+    def discovery(req: httpx.Request) -> httpx.Response:
+        return server(req) if discovery_ok else httpx.Response(503)
+
+    auth.provider.discovery_transport = httpx.MockTransport(discovery)
+
+    async def go():
+        async with httpx.AsyncClient(auth=auth.provider, transport=httpx.MockTransport(server), timeout=5) as c:
+            with pytest.raises(OAuthTokenError):
+                await asyncio.wait_for(c.post(MCP, json={}), 3)  # not a wait for a browser sign-in
+            assert server.calls == []  # the refresh token went nowhere
+            nonlocal discovery_ok
+            discovery_ok = True  # the identity server is back
+            return await asyncio.wait_for(c.post(MCP, json={}), 3)
+
+    resp = asyncio.run(go())
+    assert auth.auth_url is None
+    assert resp.status_code == 200
+    assert server.calls == ["token refresh_token", "mcp Bearer NEW-ACCESS"]
 
 
 def test_metadata_from_another_issuer_is_not_used(tmp_path):
@@ -226,3 +248,27 @@ def test_logout_removes_the_server_metadata(tmp_path):
     asyncio.run(auth.logout())
     assert not (tmp_path / "oauth" / "server.json").exists()
     assert not auth.storage.has_tokens()
+
+
+def test_start_retries_when_the_identity_server_is_unreachable(tmp_path, monkeypatch):
+    _stored_sign_in(tmp_path, expires_at=None)
+    auth = AuthManager(MCP, tmp_path)
+    attempts: list[int] = []
+    reloads: list[int] = []
+
+    async def ensure_logged_in() -> None:
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise OAuthTokenError("identity server unreachable")
+        auth.status = "ok"
+        auth.logged_in.set()
+
+    async def on_login_ok() -> str:
+        reloads.append(1)
+        return "ok"
+
+    monkeypatch.setattr(auth, "ensure_logged_in", ensure_logged_in)
+    asyncio.run(asyncio.wait_for(login_at_start(auth, on_login_ok, retry_delay=0.01), 5))
+    assert len(attempts) == 3
+    assert reloads == [1]
+    assert auth.storage.has_tokens()  # kept while it could not be renewed

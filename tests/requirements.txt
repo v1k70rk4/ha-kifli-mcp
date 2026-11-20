@@ -2,6 +2,6 @@
 # kifli_mcp_connector/requirements.txt (checked by tests/test_addon_config.py).
 -r ../kifli_mcp_connector/requirements.txt
 
-pytest>=8
+pytest>=9.2.0
 pyyaml>=6
 jsonschema>=4.20

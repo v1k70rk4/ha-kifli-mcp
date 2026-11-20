@@ -2,6 +2,15 @@
 
 > 🇭🇺 **Magyarul a lap alján — [ugorj a magyar változatra](#magyar).**
 
+## 2.2.3 — 2026-11-20
+
+**Updated — dependencies**
+
+- `mcp-proxy` 0.14.0 → 0.15.0 (serves the SSE endpoint). Tool results that carry only structured data now also come with a readable JSON text, and the endpoint log lines are clearer. 0.15.0 can also require a Bearer token on its port (`MCP_PROXY_AUTH_TOKEN`); the add-on does not use it, because the Home Assistant MCP integration cannot send one, so the SSE port still has no authentication of its own.
+- `python-multipart` ≥ 0.0.34.
+
+No configuration change and no new sign-in needed.
+
 ## 2.2.2 — 2026-11-08
 
 **Fixed — no new sign-in when the token expires while the add-on runs**
@@ -155,6 +164,15 @@ The upstream schemas were valid throughout — this is a workaround for a conver
 <a name="magyar"></a>
 
 # 🇭🇺 Változásnapló
+
+## 2.2.3 — 2026-11-20
+
+**Frissítve — függőségek**
+
+- `mcp-proxy` 0.14.0 → 0.15.0 (ez szolgálja ki az SSE végpontot). A csak strukturált adatot visszaadó eszközök válasza most olvasható JSON szöveget is tartalmaz, és a végpontok naplósorai érthetőbbek. A 0.15.0 Bearer tokent is meg tud követelni a portján (`MCP_PROXY_AUTH_TOKEN`); az add-on ezt nem használja, mert a Home Assistant MCP integrációja nem tud ilyet küldeni, így az SSE portnak továbbra sincs saját hitelesítése.
+- `python-multipart` ≥ 0.0.34.
+
+Beállítást módosítani és újra bejelentkezni nem kell.
 
 ## 2.2.2 — 2026-11-08
 

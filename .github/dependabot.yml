@@ -1,10 +1,11 @@
 version: 2
 updates:
-  # The add-on's Python dependencies are pinned only in /kifli_mcp_connector; the Dockerfile and the tests
-  # install from it. /tests is listed too, so the dependency graph re-reads tests/requirements.txt (with
-  # its -r include): left out, it kept a stale mcp 1.26.0 entry that raised false security alerts
+  # The add-on's Python dependencies are pinned only here; the Dockerfile and the tests install from it.
+  # /tests is not listed: it includes this file, so every update would come twice (#16/#20, #9/#18).
   - package-ecosystem: "pip"
-    directories: ["/kifli_mcp_connector", "/tests"]
+    directory: "/kifli_mcp_connector"
+    # raise a ">=" lower bound only when the new version no longer satisfies it, not on every release
+    versioning-strategy: increase-if-necessary
     schedule:
       interval: "monthly"
     groups:

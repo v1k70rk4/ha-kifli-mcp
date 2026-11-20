@@ -3,5 +3,5 @@
 -r ../kifli_mcp_connector/requirements.txt
 
 pytest>=9.2.0
-pyyaml>=6
+pyyaml>=6.0.3
 jsonschema>=4.20

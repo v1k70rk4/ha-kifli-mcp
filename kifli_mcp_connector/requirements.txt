@@ -7,4 +7,4 @@
 mcp==1.30.0
 # mcp-proxy >= 0.13.3 checks the Host header: the run script passes --allowed-host (allowed_hosts.py)
 mcp-proxy==0.15.0
-python-multipart>=0.0.33
+python-multipart>=0.0.34

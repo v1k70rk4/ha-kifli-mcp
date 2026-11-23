@@ -198,7 +198,7 @@ def test_a_request_that_fails_after_its_caller_gave_up_still_renews_the_session(
 
 # --- the saved list ------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("content", ["{not json", '{"tools": [{"name": 5}]}', "[]"])
+@pytest.mark.parametrize("content", ["{not json", '{"tools": [{"name": 5}]}', "[]", '{"tools": 1}'])
 def test_an_unreadable_saved_list_is_skipped(tmp_path, content):
     (tmp_path / "tools_cache.json").write_text(content, encoding="utf-8")
     assert ToolCache(tmp_path / "tools_cache.json").tools == []
@@ -235,11 +235,12 @@ def test_the_notification_is_shown_when_a_sign_in_is_needed_and_dismissed_after(
 
     async def go():
         await auth._on_redirect("https://identity.kifli.hu/oauth2/authorize?state=S")
+        await asyncio.wait_for(auth._notifier, 5)
         await auth._on_redirect("https://identity.kifli.hu/oauth2/authorize?state=T")  # not twice
+        await asyncio.wait_for(auth._notifier, 5)
         auth.status = "exchanging"
         auth._sign_in_done(None)
-        while auth._background:
-            await asyncio.sleep(0.01)
+        await asyncio.wait_for(auth._notifier, 5)
 
     asyncio.run(go())
     assert [path for path, _ in sent] == ["/core/api/services/persistent_notification/create",
@@ -258,3 +259,68 @@ def test_a_failed_notification_does_not_break_the_sign_in(tmp_path, monkeypatch)
     monkeypatch.setenv("SUPERVISOR_TOKEN", "SUPERVISOR")
     monkeypatch.setattr(kifli_auth.httpx, "AsyncClient", client)
     asyncio.run(kifli_auth.notify_sign_in_needed(True))  # logged, not raised
+
+
+def test_a_notification_that_failed_is_sent_again(tmp_path):
+    auth = AuthManager(MCP_URL, tmp_path)
+    auth.notify_retry = 0.01
+    answers = [False, False, True, False, True]
+    sent: list[bool] = []
+
+    async def notify(needed: bool) -> bool:
+        sent.append(needed)
+        return answers.pop(0)
+
+    auth.notify_ha = notify
+
+    async def go():
+        auth._notify(True)
+        await asyncio.wait_for(auth._notifier, 5)
+        auth._notify(False)
+        await asyncio.wait_for(auth._notifier, 5)
+
+    asyncio.run(go())
+    assert sent == [True, True, True, False, False]  # before: given up after the first failure
+    assert auth._notified is False
+
+
+def test_a_notification_no_longer_wanted_is_not_retried(tmp_path):
+    auth = AuthManager(MCP_URL, tmp_path)
+    auth.notify_retry = 0.05
+    sent: list[bool] = []
+
+    async def notify(needed: bool) -> bool:
+        sent.append(needed)
+        return needed is False  # the "sign in" notification fails, the dismissal works
+
+    auth.notify_ha = notify
+
+    async def go():
+        auth._notify(True)
+        await asyncio.sleep(0.01)
+        auth._notify(False)  # signed in before the retry
+        await asyncio.wait_for(auth._notifier, 5)
+
+    asyncio.run(go())
+    assert sent == [True, False]
+
+
+def test_one_deadline_covers_the_tool_lookup_too(tmp_path, monkeypatch):
+    # the SDK lists the tools before a call to a tool it does not know yet (e.g. right after a start)
+    _seen_once(tmp_path)
+    monkeypatch.setattr(mcp_schema_shim, "LIST_TIMEOUT", 2)
+    monkeypatch.setattr(mcp_schema_shim, "CALL_TIMEOUT", 0.3)
+
+    async def go():
+        shim = Shim(tmp_path)
+        shim.fake.mode = "hang"
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        result = await shim.call()
+        elapsed = loop.time() - started
+        shim.fake.release.set()
+        return result, elapsed
+
+    result, elapsed = asyncio.run(go())
+    assert result.isError and "nem válaszolt" in _text(result)
+    assert elapsed < 1.5  # before: the listing's 2 s, then the call's own deadline on top

@@ -170,7 +170,7 @@ def test_rejected_refresh_token_asks_for_a_new_sign_in(tmp_path):
     status, auth_url = asyncio.run(go())
     assert status == "waiting_code" and auth_url is not None  # a real sign-in is the only way left
     # the request it ran in was cancelled, so its link is dead: the page offers a new sign-in instead
-    assert auth.status == "needs_login"
+    assert auth.status == "error"  # with a message and the start button
     assert auth.auth_url is None
 
 

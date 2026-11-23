@@ -415,7 +415,7 @@ class ToolCache:
             self._saved = [self._dump(t) for t in self.tools]
         except FileNotFoundError:
             pass
-        except (OSError, ValueError, AttributeError) as ex:
+        except (OSError, ValueError, AttributeError, TypeError) as ex:
             logging.getLogger("kifli.shim").warning("A mentett funkciólista nem olvasható (%s) – kihagyom.", ex)
 
     @staticmethod
@@ -491,8 +491,9 @@ class Upstream:
     def mark_lost(self) -> None:
         self._lost.set()
 
-    async def bounded(self, request: Awaitable[T], timeout: float) -> T:
-        """Waits at most ``timeout`` seconds for a request to the Kifli MCP (TimeoutError past it).
+    async def bounded(self, request: Awaitable[T], timeout: float | None) -> T:
+        """Waits at most ``timeout`` seconds for a request to the Kifli MCP (TimeoutError past it;
+        None: no limit here, the caller's own deadline applies).
 
         The request itself is not cancelled: it may be the one a new sign-in runs in (cancelling it
         would end the sign-in), or a tool call the server is already carrying out. If it fails, the
@@ -602,15 +603,26 @@ def build_server(auth: AuthManager, upstream: Upstream, settings: ToolSettings, 
         args = dict(arguments or {})
         # Placeholder argot eldobjuk, mielőtt forwardolnánk a rohlik MCP felé.
         args.pop(PLACEHOLDER_ARG, None)
-        try:
-            return await upstream.bounded(remote.call_tool(name, args), CALL_TIMEOUT)
-        except TimeoutError:
-            raise RuntimeError(
-                f"A Kifli {CALL_TIMEOUT} mp alatt nem válaszolt. Lehet, hogy a kérést még végrehajtja – "
-                "mielőtt megismételnéd, nézd meg az eredményét (pl. a kosarat). / Kifli did not answer in "
-                f"{CALL_TIMEOUT} s; it may still carry out the request – check (e.g. the cart) before retrying."
-            ) from None
+        # the deadline is the whole request's (below); the call itself is shielded from it
+        return await upstream.bounded(remote.call_tool(name, args), None)
 
+    # One deadline for the whole tools/call request: before the handler above, the SDK looks the tool
+    # up and lists the tools if it does not know it yet, which takes time too.
+    handle_call = server.request_handlers[types.CallToolRequest]
+
+    async def call_with_deadline(req: types.CallToolRequest) -> types.ServerResult:
+        try:
+            return await asyncio.wait_for(handle_call(req), CALL_TIMEOUT)
+        except TimeoutError:
+            log.warning("A Kifli %s mp alatt nem válaszolt a(z) %s hívásra.", CALL_TIMEOUT, req.params.name)
+            return types.ServerResult(types.CallToolResult(isError=True, content=[types.TextContent(
+                type="text",
+                text=f"A Kifli {CALL_TIMEOUT} mp alatt nem válaszolt. Lehet, hogy a kérést még végrehajtja – "
+                     "mielőtt megismételnéd, nézd meg az eredményét (pl. a kosarat). / Kifli did not answer in "
+                     f"{CALL_TIMEOUT} s; it may still carry out the request – check (e.g. the cart) before "
+                     "retrying.")]))
+
+    server.request_handlers[types.CallToolRequest] = call_with_deadline
     return server
 
 

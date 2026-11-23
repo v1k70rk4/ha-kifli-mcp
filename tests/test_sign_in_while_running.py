@@ -197,3 +197,60 @@ def test_a_logout_during_a_running_sign_in_is_not_undone_by_it(tmp_path):
     assert s.auth.status == "needs_login"
     assert not s.auth.logged_in.is_set()
     assert not s.auth.storage.has_tokens()
+
+
+def test_a_token_request_that_fails_on_the_wire_offers_a_new_sign_in(tmp_path):
+    # httpx raises the timeout and only closes the flow: no token response to report the end
+    server = FakeKifliSignIn()
+
+    def timing_out(req: httpx.Request) -> httpx.Response:
+        if "authorization_code" in req.content.decode(errors="replace"):
+            raise httpx.ReadTimeout("token endpoint timed out", request=req)
+        return server(req)
+
+    s = Scenario(tmp_path, server)
+    s.upstream_request = lambda: _request_through(s, timing_out)
+
+    async def go():
+        request = asyncio.create_task(s.upstream_request())
+        await _wait_until(lambda: s.auth.status == "waiting_code", "the sign-in link")
+        await s.page("POST", "/callback", data=s.pasted())
+        with pytest.raises(httpx.ReadTimeout):
+            await asyncio.wait_for(request, 5)
+        return await s.page()
+
+    page = asyncio.run(go())
+    assert s.auth.status == "error"  # before: "exchanging" for good, /start refused
+    assert "megszakadt" in (s.auth.error or "")
+    assert 'action="start"' in page
+
+
+def test_tokens_of_an_exchange_a_logout_overtook_are_not_saved(tmp_path):
+    server = FakeKifliSignIn()
+    s = Scenario(tmp_path, server)
+
+    async def logout_meanwhile(req: httpx.Request) -> httpx.Response:
+        if "authorization_code" in req.content.decode(errors="replace"):
+            await s.auth.logout()  # while the token request is on its way
+        return server(req)
+
+    s.upstream_request = lambda: _request_through(s, logout_meanwhile)
+
+    async def go():
+        request = asyncio.create_task(s.upstream_request())
+        await _wait_until(lambda: s.auth.status == "waiting_code", "the sign-in link")
+        await s.page("POST", "/callback", data=s.pasted())
+        with pytest.raises(Exception):  # noqa: B017
+            await asyncio.wait_for(request, 5)
+
+    asyncio.run(go())
+    assert "token authorization_code" in server.calls  # the identity server did answer with tokens
+    assert not s.auth.storage.has_tokens()  # before: written to /data after the logout
+    assert s.auth.provider.context.current_tokens is None
+    assert s.auth.status == "needs_login"
+    assert not s.auth.logged_in.is_set()
+
+
+async def _request_through(s: Scenario, handler) -> httpx.Response:
+    async with httpx.AsyncClient(auth=s.auth.provider, transport=httpx.MockTransport(handler), timeout=5) as c:
+        return await c.post(MCP, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})

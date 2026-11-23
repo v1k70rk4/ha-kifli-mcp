@@ -63,6 +63,14 @@ class Scenario:
         self.auth.provider.discovery_transport = httpx.MockTransport(server)
         self.server = server
         self.reloads = 0
+        # the Home Assistant notification: recorded, never sent to a Supervisor
+        self.notifications: list[bool] = []
+
+        async def notify(needed: bool) -> bool:
+            self.notifications.append(needed)
+            return True
+
+        self.auth.notify_ha = notify
 
         async def on_login_ok() -> str:
             self.reloads += 1
@@ -111,6 +119,7 @@ def test_a_sign_in_needed_while_running_completes_on_the_page(tmp_path):
     assert s.reloads == 1  # Home Assistant is told to reload the tools
     assert resp.status_code == 200  # the request that needed the sign-in went through with the new token
     assert s.server.calls[-1] == "mcp Bearer NEW-ACCESS"
+    assert s.notifications == [True, False]  # "sign in" shown, then dismissed
 
 
 def test_a_link_from_an_earlier_sign_in_is_refused_and_the_sign_in_goes_on(tmp_path):

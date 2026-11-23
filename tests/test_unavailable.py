@@ -324,3 +324,27 @@ def test_one_deadline_covers_the_tool_lookup_too(tmp_path, monkeypatch):
     result, elapsed = asyncio.run(go())
     assert result.isError and "nem válaszolt" in _text(result)
     assert elapsed < 1.5  # before: the listing's 2 s, then the call's own deadline on top
+
+
+def test_a_notification_that_failed_but_took_effect_is_still_dismissed(tmp_path):
+    # e.g. Home Assistant created it but the answer timed out, and the sign-in came before the retry
+    auth = AuthManager(MCP_URL, tmp_path)
+    auth.notify_retry = 0.05
+    auth._notified = False  # a dismissal was delivered earlier
+    sent: list[bool] = []
+
+    async def notify(needed: bool) -> bool:
+        sent.append(needed)
+        return needed is False  # the "sign in" request fails (although it took effect)
+
+    auth.notify_ha = notify
+
+    async def go():
+        auth._notify(True)
+        await asyncio.sleep(0.01)
+        auth._notify(False)
+        await asyncio.wait_for(auth._notifier, 5)
+
+    asyncio.run(go())
+    assert sent == [True, False]  # before: the dismissal was skipped, the notification stayed
+    assert auth._notified is False

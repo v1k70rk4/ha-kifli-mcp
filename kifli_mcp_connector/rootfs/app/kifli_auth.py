@@ -432,6 +432,9 @@ class AuthManager:
                 self._notified = want
                 delay = self.notify_retry
             else:
+                # it may have taken effect anyway (e.g. only the answer timed out): unknown until a
+                # delivery succeeds, so the state wanted by then is sent even if it matches the last one
+                self._notified = None
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 600)
 

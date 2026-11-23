@@ -169,6 +169,20 @@ class KifliOAuthProvider(OAuthClientProvider):
     _EXPIRED = 1.0
     # transport for the startup discovery of the authorization server; tests use a fake server
     discovery_transport: httpx.AsyncBaseTransport | None = None
+    # told how a sign-in's token exchange ended (None: tokens saved). A sign-in does not always run
+    # in AuthManager.ensure_logged_in: when a token cannot be renewed, the SDK starts one inside
+    # whichever request needed the token (e.g. the upstream session's), and only this sees it end.
+    on_sign_in_done: Callable[[Exception | None], None] | None = None
+
+    async def _handle_token_response(self, response: httpx.Response) -> None:
+        try:
+            await super()._handle_token_response(response)
+        except Exception as ex:
+            if self.on_sign_in_done is not None:
+                self.on_sign_in_done(ex)
+            raise
+        if self.on_sign_in_done is not None:
+            self.on_sign_in_done(None)
 
     async def _perform_authorization_code_grant(self) -> tuple[str, str]:
         current = (self.context.client_metadata.scope or "").split()
@@ -265,6 +279,7 @@ class AuthManager:
             callback_handler=self._wait_for_code,
             timeout=24 * 3600,
         )
+        self.provider.on_sign_in_done = self._sign_in_done
         self.storage.metadata_source = lambda: self.provider.context.oauth_metadata
         self.storage.mcp_url = mcp_url
         # the SDK would send these tokens to the new endpoint before noticing the change (country,
@@ -282,6 +297,10 @@ class AuthManager:
     async def _on_redirect(self, url: str) -> None:
         self.auth_url = url
         self.status = "waiting_code"
+        self.error = None
+        # the stored sign-in is gone (e.g. the refresh token was rejected): until the new one, the tool
+        # list is empty and calls are refused at once, instead of every request waiting for the sign-in
+        self.logged_in.clear()
         loop = asyncio.get_running_loop()
         self._code = loop.create_future()
         log.warning("BEJELENTKEZÉS SZÜKSÉGES. Nyisd meg az add-on oldalát a HA oldalsávban, vagy ezt a címet:")
@@ -293,6 +312,19 @@ class AuthManager:
         code, state = await self._code
         self.status = "exchanging"
         return code, state
+
+    def _sign_in_done(self, error: Exception | None) -> None:
+        if self.status != "exchanging":
+            return  # logged out meanwhile: the logout wins (see ensure_logged_in)
+        self.auth_url = None
+        if error is not None:
+            self.status = "error"
+            self.error = f"{type(error).__name__}: {error}"
+            return
+        self.status = "ok"
+        self.error = None
+        self.logged_in.set()
+        log.info("Kifli OAuth bejelentkezés rendben, token elmentve.")
 
     # --- az ingress oldal hívja -----------------------------------------------
     def submit_callback_url(self, pasted: str) -> str | None:
@@ -315,6 +347,14 @@ class AuthManager:
             return (
                 "Most nincs folyamatban bejelentkezés – indíts újat a gombbal. / "
                 "No login in progress – start a new one with the button."
+            )
+        expected = parse_qs(urlsplit(self.auth_url or "").query).get("state", [None])[0]
+        if expected is not None and state != expected:
+            # e.g. a sign-in link from an older log line: the SDK would reject it and end this sign-in
+            return (
+                "Ez a cím egy korábbi bejelentkezéshez tartozik – kattints a fenti Bejelentkezés gombra, "
+                "és az utána kapott címet másold be. / This URL belongs to an earlier sign-in – use the "
+                "Sign in button above and paste the URL you get after it."
             )
         self._code.set_result((code, state))
         return None
@@ -369,10 +409,11 @@ class AuthManager:
         if resp.status_code == 401:
             raise RuntimeError(f"A bejelentkezés után is 401: {resp.text[:200]}")
         resp.raise_for_status()
+        if self.status != "ok":  # with a stored token there was no sign-in to report it
+            log.info("Kifli OAuth bejelentkezés rendben.")
         self.status = "ok"
         self.auth_url = None
         self.logged_in.set()
-        log.info("Kifli OAuth bejelentkezés rendben, token elmentve.")
 
 
 # --- Home Assistant: az MCP integráció újratöltése bejelentkezés után ------------
@@ -536,7 +577,8 @@ def build_app(auth: AuthManager, port: int, on_login_ok, settings=None, on_tools
         if auth.status == "ok":
             body = OK_BODY
         else:
-            if auth.auth_url:
+            # the link only while a sign-in waits for its code; otherwise a button to start a new one
+            if auth.status == "waiting_code" and auth.auth_url:
                 btn = f'<a class="btn" href="{html.escape(auth.auth_url)}" target="_blank" rel="noopener">🔐 Bejelentkezés / Sign in</a>'
             else:
                 btn = '<form method="post" action="start"><button type="submit">🔐 Bejelentkezés indítása / Start login</button></form>'
@@ -555,8 +597,10 @@ def build_app(auth: AuthManager, port: int, on_login_ok, settings=None, on_tools
         if err:
             return render(err)
         # megvárjuk a token cserét (pár másodperc), hogy a válasz már a végeredményt mutassa
-        with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(auth.logged_in.wait(), timeout=25)
+        for _i in range(100):
+            if auth.logged_in.is_set() or auth.status not in ("waiting_code", "exchanging"):
+                break
+            await asyncio.sleep(0.25)
         if auth.status == "ok":
             note = await on_login_ok()
             return render(f"Siker! HA MCP integráció újratöltve: {note}", "ok")
@@ -564,10 +608,11 @@ def build_app(auth: AuthManager, port: int, on_login_ok, settings=None, on_tools
 
     async def start(_: Request):
         if auth.status not in ("waiting_code", "exchanging"):
+            auth.status = "init"  # until the new sign-in is under way (an old status would end the wait below)
             asyncio.get_running_loop().create_task(_safe_login(auth))
             # adunk egy pillanatot a felfedezésnek + regisztrációnak, hogy legyen URL
             for _i in range(40):
-                if auth.auth_url:
+                if auth.status in ("waiting_code", "ok", "error"):
                     break
                 await asyncio.sleep(0.25)
         return RedirectResponse(url=".", status_code=303)

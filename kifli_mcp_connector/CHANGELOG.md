@@ -2,6 +2,19 @@
 
 > 🇭🇺 **Magyarul a lap alján — [ugorj a magyar változatra](#magyar).**
 
+## 2.2.4 — 2026-11-23
+
+**Fixed — a new sign-in needed while the add-on runs could not be completed on the page**
+
+When the identity server rejects the saved sign-in while the add-on runs (it no longer renews the token), the add-on asks for a new sign-in. The sign-in itself worked, but the page did not notice: it kept showing "exchanging token…" with the old sign-in link, every further paste answered "No login in progress", and the start button did not come back until the add-on was restarted. Meanwhile every tool request from Home Assistant waited for the sign-in instead of getting an answer.
+
+- After the pasted URL the page now shows the result (signed in, or the error), and Home Assistant's MCP integration is reloaded as after any sign-in.
+- Until the new sign-in, Home Assistant gets an empty tool list at once (as before the first sign-in), instead of waiting.
+- A URL from an earlier sign-in attempt (e.g. a link from an older log line) is refused with a message, and the sign-in in progress goes on.
+- If the token exchange fails, the page shows the error at once and offers a new sign-in.
+
+If your page is stuck like this: restart the add-on. If you already pasted the URL, the sign-in was saved and no new one is needed.
+
 ## 2.2.3 — 2026-11-20
 
 **Updated — dependencies**
@@ -164,6 +177,19 @@ The upstream schemas were valid throughout — this is a workaround for a conver
 <a name="magyar"></a>
 
 # 🇭🇺 Változásnapló
+
+## 2.2.4 — 2026-11-23
+
+**Javítva — a futás közben szükséges új bejelentkezést nem lehetett befejezni az oldalon**
+
+Ha az identity szerver futás közben elutasítja a mentett bejelentkezést (nem újítja meg a tokent), az add-on új bejelentkezést kér. Maga a bejelentkezés sikerült, de az oldal ezt nem vette észre: továbbra is „token csere…” állapotot és a régi bejelentkező linket mutatta, minden újabb beillesztésre azt írta, hogy „Most nincs folyamatban bejelentkezés”, és az indító gomb az add-on újraindításáig nem jött vissza. Közben a Home Assistant minden eszközkérése a bejelentkezésre várt, ahelyett hogy választ kapott volna.
+
+- A beillesztett cím után az oldal most az eredményt mutatja (bejelentkezve, vagy a hibát), és a Home Assistant MCP-integrációja újratöltődik, mint bármely bejelentkezés után.
+- Az új bejelentkezésig a Home Assistant azonnal üres eszközlistát kap (mint az első bejelentkezés előtt), nem vár.
+- Egy korábbi bejelentkezési kísérlet címét (pl. egy régebbi naplósor linkjéből) üzenettel elutasítja, és a folyamatban lévő bejelentkezés megy tovább.
+- Ha a token csere nem sikerül, az oldal azonnal mutatja a hibát, és új bejelentkezést kínál.
+
+Ha nálad így beragadt az oldal: indítsd újra az add-ont. Ha a címet már beillesztetted, a bejelentkezés elmentődött, újra nem kell bejelentkezni.
 
 ## 2.2.3 — 2026-11-20
 

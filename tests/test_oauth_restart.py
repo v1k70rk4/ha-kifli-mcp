@@ -169,7 +169,7 @@ def test_token_expiry_is_saved_but_not_handed_to_the_sdk(tmp_path):
 def test_the_sdk_still_has_the_private_hooks_we_override():
     # KifliOAuthProvider overrides private SDK methods; an mcp update that renames them would make
     # the overrides silently dead code (no offline_access, logged out after every restart)
-    for name in ("_initialize", "_perform_authorization_code_grant", "_refresh_token"):
+    for name in ("_initialize", "_perform_authorization_code_grant", "_refresh_token", "_handle_token_response"):
         assert name in vars(OAuthClientProvider), f"OAuthClientProvider.{name} is gone – check KifliOAuthProvider"
         assert name in vars(KifliOAuthProvider)
 

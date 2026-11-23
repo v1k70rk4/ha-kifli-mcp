@@ -8,6 +8,7 @@ started a full sign-in, instead of using the refresh token it had.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import time
 from urllib.parse import parse_qs
@@ -150,9 +151,27 @@ def test_token_expiring_while_running_is_refreshed(tmp_path, monkeypatch):
 def test_rejected_refresh_token_asks_for_a_new_sign_in(tmp_path):
     _stored_sign_in(tmp_path, expires_at=time.time() - 60)
     server = FakeKifli(refresh_ok=False)
-    auth, resp = _first_request_after_restart(tmp_path, server)
-    assert resp is None
-    assert auth.auth_url is not None  # a real sign-in is the only way left
+    auth = AuthManager(MCP, tmp_path)
+    auth.provider.discovery_transport = httpx.MockTransport(server)
+
+    async def go():
+        async with httpx.AsyncClient(auth=auth.provider, transport=httpx.MockTransport(server), timeout=5) as c:
+            request = asyncio.create_task(c.post(MCP, json={}))
+            for _ in range(100):
+                if auth.status == "waiting_code":
+                    break
+                await asyncio.sleep(0.02)
+            seen = auth.status, auth.auth_url
+            request.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await request
+            return seen
+
+    status, auth_url = asyncio.run(go())
+    assert status == "waiting_code" and auth_url is not None  # a real sign-in is the only way left
+    # the request it ran in was cancelled, so its link is dead: the page offers a new sign-in instead
+    assert auth.status == "needs_login"
+    assert auth.auth_url is None
 
 
 def test_token_expiry_is_saved_but_not_handed_to_the_sdk(tmp_path):

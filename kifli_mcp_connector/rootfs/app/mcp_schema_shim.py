@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import copy
+import json
 import logging
 import math
 import os
+from collections.abc import Awaitable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import anyio
 import mcp.server.stdio
@@ -26,6 +28,8 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 from tool_settings import ToolSettings, notify_ha
+
+T = TypeVar("T")
 
 SERVER_NAME = "kifli-schema-shim"
 SERVER_VERSION = "2.2.4"
@@ -49,6 +53,23 @@ IGNORE_WORDS = {
 # OpenAI/HA kompat: ha egy tool-nak nincs bemeneti paramétere, ne legyen üres a properties,
 # mert egyes láncokban (HA serializer / OpenAI validation) így 400-ra fut.
 PLACEHOLDER_ARG = "__ha_noop"
+
+# Home Assistant's MCP integration gives a whole tool listing or tool call 30 s (connecting included).
+# A listing that does not arrive in time fails its setup, and then its LLM API is gone: every Assist
+# conversation that uses it fails, not just the Kifli tools. So the shim always answers in time.
+LIST_TIMEOUT = 15
+CALL_TIMEOUT = 25
+
+UNAVAILABLE_SIGN_IN = (
+    "A Kifli jelenleg nem érhető el: újra be kell jelentkezni a 'Kifli MCP' oldalon a Home Assistant "
+    "oldalsávjában. / Kifli is unavailable right now: sign in again on the 'Kifli MCP' panel in the "
+    "Home Assistant sidebar."
+)
+UNAVAILABLE_CONNECTION = (
+    "A Kifli jelenleg nem érhető el (a kapcsolat a Kifli szerverével most épül újra) – próbáld újra "
+    "pár perc múlva. / Kifli is unavailable right now (reconnecting to its server) – try again in a "
+    "few minutes."
+)
 
 
 def _strip_dollar_keys(node: Any) -> Any:
@@ -379,6 +400,43 @@ def simplify_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
     return base
 
 
+class ToolCache:
+    """The last tool list the Kifli MCP gave, kept in /data. While the Kifli MCP cannot be reached
+    (a new sign-in is needed, its server is down) Home Assistant gets this list: its MCP integration
+    stays loaded, and a call answers that Kifli is unavailable, which the assistant can tell."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.tools: list[types.Tool] = []
+        self._saved: list[dict] = []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.tools = [types.Tool.model_validate(t) for t in data.get("tools") or []]
+            self._saved = [self._dump(t) for t in self.tools]
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, AttributeError) as ex:
+            logging.getLogger("kifli.shim").warning("A mentett funkciólista nem olvasható (%s) – kihagyom.", ex)
+
+    @staticmethod
+    def _dump(tool: types.Tool) -> dict:
+        return tool.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+    def save(self, tools: list[types.Tool]) -> None:
+        self.tools = list(tools)
+        dumped = [self._dump(t) for t in tools]
+        if dumped == self._saved:
+            return
+        tmp = self.path.with_suffix(".tmp")
+        try:
+            tmp.write_text(json.dumps({"tools": dumped}, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self.path)
+        except OSError as ex:
+            logging.getLogger("kifli.shim").warning("A funkciólista nem menthető (%s).", ex)
+            return
+        self._saved = dumped
+
+
 class Upstream:
     """A Rohlik Group MCP felé nyitott, hitelesített kapcsolat.
 
@@ -395,6 +453,7 @@ class Upstream:
         self._lost = asyncio.Event()
         self._idle = asyncio.Event()  # no session open
         self._idle.set()
+        self._calls: set[asyncio.Task] = set()  # requests still running after their caller gave up
         self.log = logging.getLogger("kifli.upstream")
         auth.logout_hooks.append(self.close)
 
@@ -432,6 +491,24 @@ class Upstream:
     def mark_lost(self) -> None:
         self._lost.set()
 
+    async def bounded(self, request: Awaitable[T], timeout: float) -> T:
+        """Waits at most ``timeout`` seconds for a request to the Kifli MCP (TimeoutError past it).
+
+        The request itself is not cancelled: it may be the one a new sign-in runs in (cancelling it
+        would end the sign-in), or a tool call the server is already carrying out. If it fails, the
+        session it ran in is renewed, also when nobody waits for it any more."""
+        lost = self._lost
+        task = asyncio.ensure_future(request)
+        self._calls.add(task)
+
+        def done(t: asyncio.Task) -> None:
+            self._calls.discard(t)
+            if not t.cancelled() and t.exception() is not None:
+                lost.set()
+
+        task.add_done_callback(done)
+        return await asyncio.wait_for(asyncio.shield(task), timeout)
+
     async def close(self) -> None:
         """Ends the session on logout, while its token is still in memory to tell the server too."""
         self._lost.set()
@@ -439,61 +516,9 @@ class Upstream:
             await asyncio.wait_for(self._idle.wait(), timeout=10)
 
 
-def ingress_server(app, port: int) -> uvicorn.Server:
-    server = uvicorn.Server(
-        uvicorn.Config(
-            app,
-            host="0.0.0.0",
-            port=port,
-            log_level="warning",
-            # the page accepts the Supervisor's address only, so it needs the real peer, never a
-            # forwarded header; it uses relative URLs, so it does not need them either
-            proxy_headers=False,
-        )
-    )
-    server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
-    return server
-
-
-async def main() -> None:
-    setup_logging()
+def build_server(auth: AuthManager, upstream: Upstream, settings: ToolSettings, cache: ToolCache) -> Server:
+    """The MCP server Home Assistant talks to (through mcp-proxy): the Kifli tools, cooked."""
     log = logging.getLogger("kifli.shim")
-
-    url = os.environ.get("KIFLI_MCP_URL", "https://mcp.kifli.hu/mcp")
-    data_dir = Path(os.environ.get("KIFLI_DATA_DIR", "/data"))
-    sse_port = int(os.environ.get("KIFLI_PORT", "42783"))
-    ingress_port = int(os.environ.get("KIFLI_INGRESS_PORT", "42784"))
-
-    new_tools_enabled = os.environ.get("KIFLI_NEW_TOOLS_ENABLED", "false").lower() == "true"
-    settings = ToolSettings(data_dir / "tool_settings.json", new_tools_enabled)
-    auth = AuthManager(url, data_dir)
-    upstream = Upstream(url, auth)
-
-    async def on_login_ok() -> str:
-        # megvárjuk, hogy az upstream kapcsolat is felálljon, és csak utána
-        # töltetjük újra a HA MCP-integrációt, hogy már a toolokat lássa
-        with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(upstream.ready.wait(), timeout=30)
-        note = await reload_ha_mcp_entry(sse_port)
-        log.info("HA MCP integráció újratöltés: %s", note)
-        return note
-
-    async def on_tools_saved() -> tuple[bool, str]:
-        ok, note = await reload_ha_mcp_entry_result(sse_port)
-        if ok:
-            log.info("Funkciólista mentve, HA MCP integráció újratöltve: %s", note)
-        else:
-            log.warning("Funkciólista mentve, de a HA MCP integráció újratöltése nem sikerült: %s", note)
-        return ok, note
-
-    web = ingress_server(build_app(auth, sse_port, on_login_ok, settings, on_tools_saved), ingress_port)
-
-    async def serve_web() -> None:
-        try:
-            await web.serve()
-        except Exception as ex:  # noqa: BLE001
-            log.error("Ingress oldal nem indult (%s) – a bejelentkező link a naplóban lesz.", ex)
-
     server = Server(SERVER_NAME)
 
     # keep a reference to fire-and-forget tasks, otherwise asyncio may drop them mid-flight
@@ -507,23 +532,31 @@ async def main() -> None:
     @server.list_tools()
     async def list_tools() -> list[types.Tool]:
         remote = upstream.session
-        if remote is None or not auth.logged_in.is_set():
-            log.info("tools/list bejelentkezés nélkül → üres lista (nyisd meg az add-on oldalát)")
-            return []
-        try:
-            res = await remote.list_tools()
-        except Exception:
-            upstream.mark_lost()
-            raise
+        tools: list[types.Tool] | None = None
+        if remote is not None and auth.logged_in.is_set():
+            try:
+                res = await upstream.bounded(remote.list_tools(), LIST_TIMEOUT)
+            except TimeoutError:
+                log.warning("A Kifli MCP %s mp alatt nem adta meg a funkciólistát – a legutóbbit adom.", LIST_TIMEOUT)
+            except Exception as ex:  # noqa: BLE001
+                log.warning("A Kifli MCP funkciólistája nem jött meg (%s: %s) – a legutóbbit adom.",
+                            type(ex).__name__, ex)
+            else:
+                tools = res.tools
+                cache.save(tools)
+                # funkciólista nyilvántartása: új / megszűnt eszközök jelzése
+                # (also retries whatever Home Assistant did not accept last time)
+                settings.sync({(t.name or ""): (getattr(t, "description", "") or "") for t in tools})
+                if settings.has_pending():
+                    spawn(notify_ha(settings))
+        if tools is None:
+            # the calls answer that Kifli is unavailable; before the first sign-in there is no list yet
+            tools = cache.tools
+            if not tools:
+                log.info("tools/list bejelentkezés nélkül → üres lista (nyisd meg az add-on oldalát)")
         out: list[types.Tool] = []
 
-        # funkciólista nyilvántartása: új / megszűnt eszközök jelzése
-        # (also retries whatever Home Assistant did not accept last time)
-        settings.sync({(t.name or ""): (getattr(t, "description", "") or "") for t in res.tools})
-        if settings.has_pending():
-            spawn(notify_ha(settings))
-
-        for t in res.tools:
+        for t in tools:
             name = t.name or ""
             name_l = name.lower()
 
@@ -557,12 +590,10 @@ async def main() -> None:
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any] | None = None):
         remote = upstream.session
-        if remote is None or not auth.logged_in.is_set():
-            raise RuntimeError(
-                "A Kifli MCP nincs bejelentkezve. Nyisd meg a 'Kifli MCP' oldalt a Home Assistant "
-                "oldalsávjában, és jelentkezz be. / Not logged in to the Kifli MCP – open the "
-                "'Kifli MCP' panel in the Home Assistant sidebar and sign in."
-            )
+        if not auth.logged_in.is_set():
+            raise RuntimeError(UNAVAILABLE_SIGN_IN)
+        if remote is None:
+            raise RuntimeError(UNAVAILABLE_CONNECTION)
         if not settings.is_enabled(name):
             raise RuntimeError(
                 f"A(z) '{name}' Kifli-funkció ki van kapcsolva (Kifli MCP oldal → Funkciók). / "
@@ -572,10 +603,74 @@ async def main() -> None:
         # Placeholder argot eldobjuk, mielőtt forwardolnánk a rohlik MCP felé.
         args.pop(PLACEHOLDER_ARG, None)
         try:
-            return await remote.call_tool(name, args)
-        except Exception:
-            upstream.mark_lost()
-            raise
+            return await upstream.bounded(remote.call_tool(name, args), CALL_TIMEOUT)
+        except TimeoutError:
+            raise RuntimeError(
+                f"A Kifli {CALL_TIMEOUT} mp alatt nem válaszolt. Lehet, hogy a kérést még végrehajtja – "
+                "mielőtt megismételnéd, nézd meg az eredményét (pl. a kosarat). / Kifli did not answer in "
+                f"{CALL_TIMEOUT} s; it may still carry out the request – check (e.g. the cart) before retrying."
+            ) from None
+
+    return server
+
+
+def ingress_server(app, port: int) -> uvicorn.Server:
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host="0.0.0.0",
+            port=port,
+            log_level="warning",
+            # the page accepts the Supervisor's address only, so it needs the real peer, never a
+            # forwarded header; it uses relative URLs, so it does not need them either
+            proxy_headers=False,
+        )
+    )
+    server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+    return server
+
+
+async def main() -> None:
+    setup_logging()
+    log = logging.getLogger("kifli.shim")
+
+    url = os.environ.get("KIFLI_MCP_URL", "https://mcp.kifli.hu/mcp")
+    data_dir = Path(os.environ.get("KIFLI_DATA_DIR", "/data"))
+    sse_port = int(os.environ.get("KIFLI_PORT", "42783"))
+    ingress_port = int(os.environ.get("KIFLI_INGRESS_PORT", "42784"))
+
+    new_tools_enabled = os.environ.get("KIFLI_NEW_TOOLS_ENABLED", "false").lower() == "true"
+    settings = ToolSettings(data_dir / "tool_settings.json", new_tools_enabled)
+    cache = ToolCache(data_dir / "tools_cache.json")
+    auth = AuthManager(url, data_dir)
+    upstream = Upstream(url, auth)
+
+    async def on_login_ok() -> str:
+        # megvárjuk, hogy az upstream kapcsolat is felálljon, és csak utána
+        # töltetjük újra a HA MCP-integrációt, hogy már a toolokat lássa
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(upstream.ready.wait(), timeout=30)
+        note = await reload_ha_mcp_entry(sse_port)
+        log.info("HA MCP integráció újratöltés: %s", note)
+        return note
+
+    async def on_tools_saved() -> tuple[bool, str]:
+        ok, note = await reload_ha_mcp_entry_result(sse_port)
+        if ok:
+            log.info("Funkciólista mentve, HA MCP integráció újratöltve: %s", note)
+        else:
+            log.warning("Funkciólista mentve, de a HA MCP integráció újratöltése nem sikerült: %s", note)
+        return ok, note
+
+    web = ingress_server(build_app(auth, sse_port, on_login_ok, settings, on_tools_saved), ingress_port)
+
+    async def serve_web() -> None:
+        try:
+            await web.serve()
+        except Exception as ex:  # noqa: BLE001
+            log.error("Ingress oldal nem indult (%s) – a bejelentkező link a naplóban lesz.", ex)
+
+    server = build_server(auth, upstream, settings, cache)
 
     async def serve_stdio() -> None:
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):

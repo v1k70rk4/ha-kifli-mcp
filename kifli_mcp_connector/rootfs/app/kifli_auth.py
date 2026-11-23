@@ -250,6 +250,39 @@ class KifliOAuthProvider(OAuthClientProvider):
         return None
 
 
+SIGN_IN_NOTIFICATION_ID = "kifli_mcp_sign_in"
+
+
+async def notify_sign_in_needed(needed: bool) -> None:
+    """Shows (or dismisses) a persistent notification in Home Assistant: without it a sign-in that
+    expired is noticed only when Assist answers that Kifli is unavailable."""
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        return
+    if needed:
+        path = "persistent_notification/create"
+        payload = {
+            "notification_id": SIGN_IN_NOTIFICATION_ID,
+            "title": "Kifli MCP – be kell jelentkezni",
+            "message": (
+                "A Kifli most nem érhető el az Assistból, mert be kell jelentkezni (pl. lejárt a mentett "
+                "bejelentkezés). Nyisd meg a **Kifli MCP** oldalt az oldalsávban, és jelentkezz be.\n\n"
+                "*EN:* Kifli is unavailable to Assist until you sign in: open the **Kifli MCP** panel "
+                "in the sidebar."
+            ),
+        }
+    else:
+        path = "persistent_notification/dismiss"
+        payload = {"notification_id": SIGN_IN_NOTIFICATION_ID}
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(f"http://supervisor/core/api/services/{path}",
+                                     headers={"Authorization": f"Bearer {token}"}, json=payload)
+            resp.raise_for_status()
+    except httpx.HTTPError as ex:
+        log.warning("A bejelentkezési értesítés nem ment át a Home Assistantnak (%s).", ex)
+
+
 class AuthManager:
     """Az OAuth folyamat állapota + a provider, amit az upstream kapcsolat használ."""
 
@@ -264,6 +297,9 @@ class AuthManager:
         # run on logout before the tokens are dropped (e.g. closing the upstream session)
         self.logout_hooks: list[Callable[[], Awaitable[None]]] = []
         self._logouts = 0  # lets a sign-in notice a logout that happened while it ran
+        self.notify_ha: Callable[[bool], Awaitable[None]] = notify_sign_in_needed
+        self._notified: bool | None = None  # None: unknown (a notification may be left from before a restart)
+        self._background: set[asyncio.Task] = set()
         self.provider = KifliOAuthProvider(
             server_url=mcp_url,
             client_metadata=OAuthClientMetadata(
@@ -301,6 +337,7 @@ class AuthManager:
         # the stored sign-in is gone (e.g. the refresh token was rejected): until the new one, the tool
         # list is empty and calls are refused at once, instead of every request waiting for the sign-in
         self.logged_in.clear()
+        self._notify(True)
         loop = asyncio.get_running_loop()
         self._code = loop.create_future()
         log.warning("BEJELENTKEZÉS SZÜKSÉGES. Nyisd meg az add-on oldalát a HA oldalsávban, vagy ezt a címet:")
@@ -309,7 +346,14 @@ class AuthManager:
 
     async def _wait_for_code(self) -> tuple[str, str | None]:
         assert self._code is not None
-        code, state = await self._code
+        try:
+            code, state = await self._code
+        except asyncio.CancelledError:
+            # the request this sign-in ran in was cancelled, the link is dead: offer a new sign-in
+            if self.status == "waiting_code":
+                self.status = "needs_login"
+                self.auth_url = None
+            raise
         self.status = "exchanging"
         return code, state
 
@@ -324,7 +368,18 @@ class AuthManager:
         self.status = "ok"
         self.error = None
         self.logged_in.set()
+        self._notify(False)
         log.info("Kifli OAuth bejelentkezés rendben, token elmentve.")
+
+    def _notify(self, needed: bool) -> None:
+        """The Home Assistant notification that a sign-in is needed: shown once, dismissed after it.
+        The first sign-in after a start dismisses one left over from before the restart."""
+        if self._notified is needed:
+            return
+        self._notified = needed
+        task = asyncio.get_running_loop().create_task(self.notify_ha(needed))
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
 
     # --- az ingress oldal hívja -----------------------------------------------
     def submit_callback_url(self, pasted: str) -> str | None:
@@ -414,6 +469,7 @@ class AuthManager:
         self.status = "ok"
         self.auth_url = None
         self.logged_in.set()
+        self._notify(False)
 
 
 # --- Home Assistant: az MCP integráció újratöltése bejelentkezés után ------------

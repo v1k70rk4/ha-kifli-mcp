@@ -15,6 +15,14 @@ When the identity server rejects the saved sign-in while the add-on runs (it no 
 
 If your page is stuck like this: restart the add-on. If you already pasted the URL, the sign-in was saved and no new one is needed.
 
+**Fixed — Assist no longer stops when the Kifli MCP cannot be reached**
+
+Home Assistant's MCP integration gives the tool list 30 seconds. When it did not arrive in time (e.g. while a new sign-in was needed) or failed, the integration did not load, its LLM API disappeared, and every Assist conversation using it failed – not just the Kifli tools.
+
+- The add-on now always answers in time. While the Kifli MCP cannot be reached, Home Assistant gets the last tool list the add-on saw (kept in `/data`, so also after a restart), and a tool call answers that Kifli is unavailable right now (sign-in needed, or reconnecting) – the assistant can tell you so.
+- A tool call that Kifli does not answer in 25 seconds gets such an answer too, instead of Home Assistant's timeout; the request is not cancelled halfway (it may still be carried out, so check e.g. the cart before repeating it).
+- **New:** when a new sign-in is needed, a Home Assistant notification (*Kifli MCP – be kell jelentkezni*) says so; it is dismissed after the sign-in.
+
 ## 2.2.3 — 2026-11-20
 
 **Updated — dependencies**
@@ -190,6 +198,14 @@ Ha az identity szerver futás közben elutasítja a mentett bejelentkezést (nem
 - Ha a token csere nem sikerül, az oldal azonnal mutatja a hibát, és új bejelentkezést kínál.
 
 Ha nálad így beragadt az oldal: indítsd újra az add-ont. Ha a címet már beillesztetted, a bejelentkezés elmentődött, újra nem kell bejelentkezni.
+
+**Javítva — nem áll le az Assist, ha a Kifli MCP nem érhető el**
+
+A Home Assistant MCP-integrációja 30 másodpercet ad a funkciólistára. Ha ez nem jött meg időben (pl. amíg új bejelentkezés kellett), vagy hibát adott, az integráció nem töltődött be, eltűnt az LLM API-ja, és minden Assist beszélgetés hibára futott, amely használta – nem csak a Kifli funkciók.
+
+- Az add-on most mindig időben válaszol. Amíg a Kifli MCP nem érhető el, a Home Assistant a legutóbb látott funkciólistát kapja (a `/data`-ban tárolva, így újraindítás után is), egy funkció hívására pedig azt a választ, hogy a Kifli jelenleg nem érhető el (be kell jelentkezni, vagy a kapcsolat épül újra) – ezt az asszisztens el tudja mondani.
+- Ha a Kifli 25 másodpercen belül nem válaszol egy hívásra, szintén ilyen választ kap a Home Assistant, nem időtúllépést; a kérést nem szakítja félbe (még végrehajtódhat, ezért ismétlés előtt nézd meg pl. a kosarat).
+- **Új:** ha új bejelentkezés kell, a Home Assistantban értesítés jelenik meg (*Kifli MCP – be kell jelentkezni*); bejelentkezés után eltűnik.
 
 ## 2.2.3 — 2026-11-20
 
